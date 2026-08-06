@@ -179,6 +179,49 @@ function isCustomerItemActive(item) {
               : "จัดการโต๊ะและ QR Code"
           }}
         </RouterLink>
+
+        <!-- Condition check: When the loop encounters the 'Staff Accounts' menu and is on the owner URL, display the 'Table Management' menu immediately after -->
+        <RouterLink
+          v-if="
+            item.label === 'Staff Accounts' && route.path.startsWith('/owner/')
+          "
+          to="/owner/tables"
+          class="flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold transition-all duration-200 hover:bg-softGreen/50"
+          :class="
+            route.path === '/owner/tables'
+              ? 'bg-softGreen text-stone-950 font-black shadow-xs ring-1 ring-brand/10'
+              : 'text-stone-600 bg-transparent'
+          "
+        >
+          <component :is="iconMap['Table Management']" :size="20" />
+          {{
+            state.language === "en"
+              ? "Table Management"
+              : "จัดการโต๊ะและ QR Code"
+          }}
+        </RouterLink>
+
+        <!-- Condition check: When the loop encounters the 'Staff Accounts' menu and is on the owner URL, display the 'Table Management' menu immediately after -->
+        <RouterLink
+          v-if="
+            item.label === 'Staff Accounts' && route.path.startsWith('/owner/')
+          "
+          to="/owner/tables"
+          class="flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold transition-all duration-200 hover:bg-softGreen/50"
+          :class="
+            route.path === '/owner/tables'
+              ? 'bg-softGreen text-stone-950 font-black shadow-xs ring-1 ring-brand/10'
+              : 'text-stone-600 bg-transparent'
+          "
+        >
+          <component :is="iconMap['Table Management']" :size="20" />
+          {{
+            state.language === "en"
+              ? "Table Management"
+              : "จัดการโต๊ะและ QR Code"
+          }}
+        </RouterLink>
+
       </template>
     </div>
 
