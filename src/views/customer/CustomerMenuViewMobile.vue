@@ -14,6 +14,9 @@ const route = useRoute();
 const router = useRouter();
 const loading = ref(true);
 
+// 🔴 ตัวแปรสำหรับเช็คว่าโต๊ะถูกเคลียร์หรือยัง
+const isSessionExpired = ref(false);
+
 const { saveSession, loadSession } = useSession();
 const customerInfo = ref(null);
 
@@ -65,10 +68,42 @@ onUnmounted(() => {
   if (realtimeChannel) supabase.removeChannel(realtimeChannel);
 });
 
-// ดึงข้อมูลเมนู
+// 💡 ฟังก์ชันเช็คสถานะโต๊ะจาก database ก่อนโหลดหน้าเว็บ
+// 💡 ฟังก์ชันเช็คและรีเซ็ตสถานะโต๊ะอัตโนมัติเมื่อลูกค้าสแกนเข้ามาใหม่
+async function checkTableStatus(resId, tabId) {
+  try {
+    const { data, error } = await supabase
+      .from("table_sessions")
+      .select("status")
+      .eq("table_id", tabId)
+      .single();
+
+    if (error) throw error;
+
+    // ถ้าระบบพบว่าโต๊ะนี้สถานะเป็น available (ถูกเคลียร์ไปแล้ว)
+    // หมายถึงมีลูกค้าใหม่สแกนเข้ามา! เราต้องทำการอัปเดตให้โต๊ะนี้กลับมาเปิดใช้งาน
+    if (data && data.status === "available") {
+      const { error: updateError } = await supabase
+        .from("table_sessions")
+        .update({ status: "occupied", cart_items: [] }) // เปลี่ยนสถานะกลับเป็นใช้งาน และล้างตะกร้าเก่า
+        .eq("table_id", tabId);
+
+      if (updateError) throw updateError;
+    }
+
+    // ผ่านฉลุย ให้ทำงานต่อได้ปกติ (ไม่ล็อกหน้าจอ)
+    isSessionExpired.value = false;
+    return true;
+  } catch (err) {
+    console.error("Error checking/resetting table status:", err);
+    return true; // ป้องกันเว็บติดขัดถ้า query พลาด
+  }
+}
+
+// 💡 ดึงข้อมูลเมนู
 async function fetchMenuData() {
   const restaurantId = route.query.restaurantId;
-  if (!restaurantId) {
+  if (!restaurantId || isSessionExpired.value) {
     loading.value = false;
     return;
   }
@@ -103,8 +138,6 @@ async function fetchMenuData() {
   }
 }
 
-watch(() => [route.query.restaurantId, route.query.idmenu], fetchMenuData, { immediate: true });
-
 const menuContainerRef = ref(null);
 
 watch(
@@ -124,7 +157,8 @@ const filteredMenu = computed(() => {
     const query = state.searchQuery.toLowerCase().trim();
     items = items.filter((item) => {
       const matchEng = item.name && item.name.toLowerCase().includes(query);
-      const matchTh = item.name_th && item.name_th.toLowerCase().includes(query);
+      const matchTh =
+        item.name_th && item.name_th.toLowerCase().includes(query);
       return matchEng || matchTh;
     });
   } else if (state.selectedCategory !== "All" && state.selectedCategory) {
@@ -136,7 +170,6 @@ const filteredMenu = computed(() => {
 // ==========================================
 // 💡 ระบบ Table Session และ Real-time Cart
 // ==========================================
-
 async function initializeCustomerSession(resId, tabId) {
   if (!resId || !tabId) return;
 
@@ -179,10 +212,26 @@ const setupRealtimeCart = (resId, tabId) => {
         filter: `table_id=eq.${tabId}`,
       },
       (payload) => {
+        // 🔴 เช็คว่าโต๊ะถูกเคลียร์แล้วหรือไม่
+        if (
+          payload.new.status === "available" &&
+          (payload.old.status !== "available" ||
+            payload.old.status === undefined)
+        ) {
+          // ล้างข้อมูลตะกร้าในหน้าจอ และ sessionStorage
+          state.cart = [];
+          sessionStorage.removeItem(`cart_${resId}_${tabId}`);
+          localStorage.removeItem("customer_session");
+
+          // ล็อกหน้าจอทันที
+          isSessionExpired.value = true;
+          return;
+        }
+
         // เมื่อมีคนอื่นอัปเดตตะกร้า ให้อัปเดตข้อมูลบนหน้าจอเราทันที
         const newCartItems = payload.new.cart_items || [];
-        state.cart = newCartItems; 
-      }
+        state.cart = newCartItems;
+      },
     )
     .subscribe();
 };
@@ -217,20 +266,19 @@ const addToCart = async (item) => {
   let currentCart = state.cart ? [...state.cart] : [];
   currentCart.push({
     ...item,
-    // แอบแนบชื่อคนกดสั่งไปด้วย (เผื่อเอาไปโชว์ว่าใครสั่งเมนูนี้)
-    added_by_name: customerInfo.value?.name, 
-    added_by_id: customerInfo.value?.id
+    added_by_name: customerInfo.value?.name,
+    added_by_id: customerInfo.value?.id,
   });
-  
-  state.cart = currentCart; // อัปเดตหน้าจอตัวเองทันทีให้ไว
-  await syncCartToServer(currentCart); // ส่งขึ้นเซิร์ฟเวอร์ให้เพื่อนเห็น
+
+  state.cart = currentCart;
+  await syncCartToServer(currentCart);
 };
 
 const removeFromCart = async (itemId) => {
   if (!state.cart) return;
   let currentCart = [...state.cart];
   const index = currentCart.findIndex((cartItem) => cartItem.id === itemId);
-  
+
   if (index !== -1) {
     currentCart.splice(index, 1);
     state.cart = currentCart;
@@ -255,13 +303,21 @@ const initCart = () => {
   }
 };
 
+// 💡 ปรับปรุง Watch เพื่อเช็คสถานะโต๊ะก่อนทำงานทุกครั้งที่ query เปลี่ยน
 watch(
   () => [route.query.restaurantId, route.query.tableId],
   async ([resId, tabId]) => {
     if (resId && tabId) {
+      isSessionExpired.value = false;
+
+      // 1. เช็คว่าโต๊ะเปิดใช้งานอยู่หรือไม่
+      const isOpen = await checkTableStatus(resId, tabId);
+      if (!isOpen) return; // ถ้าโต๊ะเคลียร์ไปแล้ว หยุดการทำงาน (โชว์หน้า Lock)
+
+      // 2. ถ้าปกติ โหลดเมนูและ Session ต่อ
       initCart();
+      await fetchMenuData();
       await initializeCustomerSession(resId, tabId);
-      // 💡 เปิดเรดาร์ดักฟังทันทีที่รู้ว่าอยู่โต๊ะไหน
       setupRealtimeCart(resId, tabId);
     }
   },
@@ -281,9 +337,16 @@ watch(
 );
 
 // --- Helper Functions ---
-const getMenuName = (item) => state.language === "th" && item.name_th ? item.name_th : item.name;
-const getMenuDescription = (item) => state.language === "th" && item.description_th ? item.description_th : item.description;
-const getMenuAllergens = (item) => state.language === "th" && item.allergens_th ? item.allergens_th : item.allergens;
+const getMenuName = (item) =>
+  state.language === "th" && item.name_th ? item.name_th : item.name;
+const getMenuDescription = (item) =>
+  state.language === "th" && item.description_th
+    ? item.description_th
+    : item.description;
+const getMenuAllergens = (item) =>
+  state.language === "th" && item.allergens_th
+    ? item.allergens_th
+    : item.allergens;
 const formatAllergens = (allergens) => {
   if (!allergens) return "";
   if (Array.isArray(allergens)) return allergens.join(", ");
@@ -318,13 +381,63 @@ const goToOrder = () => {
   <div
     class="mobile-shell flex flex-col h-screen bg-white overflow-hidden relative"
   >
+    <!-- 🔴 หน้าจอ Lock: แสดงเมื่อบิลเคลียร์แล้ว -->
     <div
-      v-if="loading"
+      v-if="isSessionExpired"
+      class="flex-1 flex flex-col items-center justify-center p-6 text-center z-50 bg-stone-50"
+    >
+      <div
+        class="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mb-6 shadow-sm"
+      >
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          class="h-10 w-10 text-green-500"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          stroke-width="2"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            d="M5 13l4 4L19 7"
+          />
+        </svg>
+      </div>
+      <h1 class="text-2xl font-bold text-stone-800 mb-2">
+        {{
+          state.language === "th"
+            ? "ขอบคุณที่ใช้บริการครับ"
+            : "Thank you for dining with us"
+        }}
+      </h1>
+      <p class="text-stone-600 mb-6">
+        {{
+          state.language === "th"
+            ? "บิลนี้ถูกชำระเงินและโต๊ะถูกเคลียร์เรียบร้อยแล้ว"
+            : "This bill has been paid and the table has been cleared."
+        }}
+      </p>
+      <div class="bg-red-50 p-4 rounded-xl border border-red-100">
+        <p class="text-red-500 font-semibold text-sm">
+          {{
+            state.language === "th"
+              ? "หากต้องการสั่งอาหารเพิ่ม กรุณาสแกน QR Code ที่โต๊ะใหม่อีกครั้งครับ"
+              : "If you would like to order more, please scan the QR code at your table again."
+          }}
+        </p>
+      </div>
+    </div>
+
+    <!-- หน้าจอ Loading -->
+    <div
+      v-else-if="loading"
       class="flex-1 flex items-center justify-center text-stone-400 font-bold"
     >
       {{ state.language === "th" ? "กำลังโหลดเมนู..." : "Loading menu..." }}
     </div>
 
+    <!-- 🟢 หน้าจอ Menu ปกติ -->
     <template v-else>
       <TopBarCustomer class="sticky top-0 z-20" />
 
