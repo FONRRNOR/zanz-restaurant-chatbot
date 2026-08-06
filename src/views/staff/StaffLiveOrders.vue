@@ -14,18 +14,6 @@ const { state } = useAppState();
 const orders = ref([]);
 const activeFilter = ref("all");
 
-const navItems = computed(() => [
-  {
-    label: state.language === "en" ? "Live Orders" : "ออเดอร์สด",
-    to: "/staff/live-orders",
-  },
-  {
-    label: state.language === "en" ? "Menu Items" : "รายการเมนู",
-    to: "/staff/menu-items",
-  },
-  { label: state.language === "en" ? "Logout" : "ออกจากระบบ", to: "/logout" },
-]);
-
 async function fetchOrders() {
   const { data, error } = await supabase
     .from("orders")
