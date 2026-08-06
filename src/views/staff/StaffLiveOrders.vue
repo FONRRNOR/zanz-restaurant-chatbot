@@ -18,7 +18,7 @@ async function fetchOrders() {
   const { data, error } = await supabase
     .from("orders")
     .select("*, order_items (*)")
-    .order("created_at", { ascending: true }); // Sort by oldest order first
+    .order("created_at", { ascending: true });
 
   if (error) {
     console.error("Supabase Error:", error);
@@ -51,7 +51,7 @@ async function fetchOrders() {
       );
 
       return {
-        id: `${order.id}-${item.id}-${index}`, // Ensure unique id for each item
+        id: `${order.id}-${item.id}-${index}`,
         name: item.menu_name,
         quantity: item.quantity,
         note: item.note,
@@ -64,7 +64,18 @@ async function fetchOrders() {
   }));
 }
 
-// Pass order id directly instead of parsing from string
+const filteredOrders = computed(() => {
+  let result = orders.value;
+
+  if (activeFilter.value === "dine_in") {
+    result = result.filter((o) => o.type === "dine_in");
+  } else if (activeFilter.value === "allergies") {
+    result = result.filter((o) => o.allergies && o.allergies.length > 0);
+  }
+
+  return result;
+});
+
 async function updateOrderStatus(orderId, nextStatus) {
   console.log(`Updating Database - ID: ${orderId} | Status: ${nextStatus}`);
 
@@ -105,12 +116,12 @@ onMounted(() => {
   fetchOrders();
 
   channel = supabase
-    .channel("public:orders") // Use standard Supabase channel name
+    .channel("public:orders")
     .on(
       "postgres_changes",
       { event: "UPDATE", schema: "public", table: "orders" },
       () => {
-        fetchOrders(); // Refresh data on update
+        fetchOrders();
       },
     )
     .subscribe();
