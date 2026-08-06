@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, onMounted } from "vue";
+import { ref, computed, onMounted, onUnmounted } from "vue";
 import { useRouter } from "vue-router";
 import { Globe2, ShoppingCart, UserCircle } from "@lucide/vue";
 import MobileNav from "../../components/MobileNav.vue";
@@ -7,6 +7,7 @@ import SideNav from "../../components/SideNav.vue";
 import StatusPill from "../../components/StatusPill.vue";
 import TopBar from "../../components/TopBar.vue";
 import { useAppState } from "../../services/appState";
+import { supabase } from "../../supabaseClient";
 
 const router = useRouter();
 const { state } = useAppState();
@@ -79,34 +80,28 @@ const filteredOrders = computed(() => {
 async function updateOrderStatus(orderId, nextStatus) {
   console.log(`Updating Database - ID: ${orderId} | Status: ${nextStatus}`);
 
-  // 1. ดึงเวลาปัจจุบัน
   const now = new Date().toISOString();
 
-  // 2. อัปเดต UI ทันที (เพื่อให้การ์ดกระโดดไปคอลัมน์ถัดไปแบบไม่ต้องรอโหลด)
   const orderIndex = orders.value.findIndex((o) => o.id === orderId);
   if (orderIndex !== -1) {
-    // ปรับชื่อสถานะให้ตรงกับที่ UI ใช้ (ถ้าเป็น pending ให้ใช้ new)
     orders.value[orderIndex].status =
       nextStatus === "pending" ? "new" : nextStatus;
   }
 
-  // 3. ส่งข้อมูลไปบันทึกที่ Supabase พร้อมกับเวลาที่กดปุ่ม
   const { error } = await supabase
     .from("orders")
     .update({
       status: nextStatus,
-      updated_at: now, // บันทึกเวลาล่าสุดลง Database
+      updated_at: now,
     })
     .eq("id", orderId);
 
   if (error) {
     console.error("Update Status Error:", error);
     alert("Update failed: " + error.message);
-    // ถ้ายืนยันผิดพลาด ให้ดึงข้อมูลใหม่เพื่อคืนค่าเดิม
     await fetchOrders();
   } else {
     console.log("Update successful!");
-    // ดึงข้อมูลมา sync ให้ตรงกับ Database อีกครั้งเพื่อความชัวร์
     await fetchOrders();
   }
 }
@@ -185,7 +180,7 @@ const filterButtons = computed(() => [
 
 const liveCount = computed(
   () =>
-    state.orders.filter(
+    orders.value.filter(
       (order) => !["completed", "cancelled"].includes(order.status),
     ).length,
 );
@@ -255,7 +250,7 @@ function logout() {
               'border-green-400': column.status === 'completed',
             }"
           >
-            <!-- Header Section (ใช้สีโทน 50 เป็น Background) -->
+            <!-- Header Section -->
             <div
               class="-mx-4 -mt-4 mb-4 flex items-center justify-between px-4 py-3 border-b-2 transition-colors"
               :class="{
@@ -277,7 +272,6 @@ function logout() {
                 {{ column.title }}
               </h2>
 
-              <!-- Badge Section (ใช้สีโทน 100 เป็นพื้นหลัง และโทน 600 เป็นสีตัวอักษร) -->
               <span
                 class="px-2.5 py-1 rounded-full text-xs font-bold transition-colors"
                 :class="{
@@ -299,7 +293,7 @@ function logout() {
               class="flex-1 space-y-4 overflow-y-auto max-h-[700px] px-1 pb-2 scrollbar-hide"
             >
               <article
-                v-for="order in state.orders.filter(
+                v-for="order in filteredOrders.filter(
                   (order) => order.status === column.status,
                 )"
                 :key="order.id"
@@ -355,7 +349,6 @@ function logout() {
                 </div>
 
                 <div class="mt-5 pt-4 border-t border-stone-50">
-                  <!-- Action Button (ใช้สีโทน 600 เป็นพื้นหลัง) -->
                   <button
                     v-if="column.action"
                     @click="updateOrderStatus(order.id, column.next)"
@@ -373,7 +366,6 @@ function logout() {
                     {{ column.action }}
                   </button>
 
-                  <!-- Completed / End State -->
                   <div
                     v-else
                     class="rounded-xl py-2 text-center text-xs font-bold uppercase transition-colors"
