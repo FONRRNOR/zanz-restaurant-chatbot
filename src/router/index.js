@@ -4,6 +4,7 @@ import LogoutView from "../views/shared/LogoutView.vue";
 import LoginView from "../views/auth/LoginView.vue";
 import ForgotPassword from "../views/auth/ForgotPassword.vue";
 import CustomerMenu from "../views/customer/CustomerMenu.vue";
+import CustomerMenuViewMobile from "../views/customer/CustomerMenuViewMobile.vue";
 import CartView from "../views/customer/CartView.vue";
 import OrderConfirmation from "../views/customer/OrderConfirmation.vue";
 import OrderStatus from "../views/customer/OrderStatus.vue";
@@ -14,6 +15,9 @@ import OwnerMenuManagement from "../views/owner/OwnerMenuManagement.vue";
 import OwnerOrders from "../views/owner/OwnerOrders.vue";
 import OwnerStaffAccounts from "../views/owner/OwnerStaffAccounts.vue";
 import { useAppState } from "../services/appState";
+import OrderConfirmMobile from "../views/customer/OrderConfirmMobile.vue";
+import OrderStatusMobile from "../views/customer/OrderStatusMobile.vue";
+import OwnerTableManagement from "../views/owner/OwnerTableManagement.vue";
 
 const routes = [
   { path: "/", component: RoleSelection },
@@ -22,12 +26,17 @@ const routes = [
   { path: "/staff/login", component: LoginView, props: { type: "staff" } },
   { path: "/owner/login", component: LoginView, props: { type: "owner" } },
   { path: "/customer/menu", component: CustomerMenu },
+  { path: "/customer/menu/mobile", component: CustomerMenuViewMobile },
   { path: "/customer/cart", component: CartView },
   {
-    path: "/customer/order-confirmation/:orderId",
+    path: "/customer/order-confirmation/:orderNumber",
     component: OrderConfirmation,
   },
   { path: "/customer/order-status", component: OrderStatus },
+  {
+    path: "/customer/order-status/mobile/:orderId",
+    component: OrderStatusMobile,
+  },
   {
     path: "/staff/live-orders",
     component: StaffLiveOrders,
@@ -58,6 +67,16 @@ const routes = [
     component: OwnerStaffAccounts,
     meta: { requiresOwner: true },
   },
+  {
+    path: "/owner/tables",
+    component: OwnerTableManagement,
+    meta: { requiresOwner: true },
+  },
+  {
+    path: "/order",
+    name: "OrderConfirm",
+    component: OrderConfirmMobile,
+  },
 ];
 
 const router = createRouter({
@@ -75,20 +94,43 @@ router.beforeEach((to) => {
     "/staff/login",
     "/forgot-password",
     "/customer/menu",
+    "/customer/menu/mobile",
     "/customer/cart",
     "/customer/order-status",
+    "/order",
   ];
 
-  const isPublicDynamicPage = to.path.startsWith(
-    "/customer/order-confirmation/",
-  );
+  const isPublicDynamicPage =
+    to.path.startsWith("/customer/order-confirmation/") ||
+    to.path.startsWith("/customer/order-status/mobile/");
 
+  // 1. 🌟 เปลี่ยนมาดึงข้อมูลจาก sessionStorage แทน
+  const savedUserString = sessionStorage.getItem("zank-active-user");
+  if (!state.activeUser && savedUserString) {
+    try {
+      state.activeUser = JSON.parse(savedUserString);
+    } catch (error) {
+      console.error("Error parsing user from sessionStorage:", error);
+    }
+  }
+
+  // 2. เช็คการเข้าถึงหน้า Owner/Staff
   if (
     !publicPages.includes(to.path) &&
     !isPublicDynamicPage &&
     !state.activeUser
   ) {
-    return "/";
+    return "/"; 
+  }
+
+  // 3. ถ้าเข้าหน้าแรกแต่มี Session ค้างอยู่ ให้ปัดไปหน้า Dashboard
+  if (to.path === "/" && state.activeUser) {
+    if (state.activeUser.role === "owner") {
+      return "/owner/dashboard";
+    }
+    if (state.activeUser.role === "staff") {
+      return "/staff/live-orders";
+    }
   }
 });
 

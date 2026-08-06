@@ -28,6 +28,21 @@ const isModalOpen = ref(false); // Controls visibility for the "Add New" Modal P
 const contentLanguage = ref("en"); // Used only for the traditional Edit form side-tab
 const viewMode = ref("list"); // Controls view switching between 'list' and 'table'
 
+// State for toast notifications
+const alertInfo = ref({
+  show: false,
+  message: "",
+  type: "success", // 'success' | 'error'
+});
+
+// Trigger custom notification toast
+function triggerAlert(message, type = "success") {
+  alertInfo.value = { show: true, message, type };
+  setTimeout(() => {
+    alertInfo.value.show = false;
+  }, 3000);
+}
+
 // Form reactive states (Separated to prevent data collision)
 const form = reactive({}); // For Side-by-Side traditional Edit Item
 const addForm = reactive({}); // For Center-PopUp Add New Item
@@ -37,13 +52,14 @@ async function fetchMenuItems() {
   isLoading.value = true;
   try {
     // Check global authentication fallback credentials
-    const savedUserJson = localStorage.getItem("zank-active-user");
+    const savedUserJson = sessionStorage.getItem("zank-active-user");
     if (!savedUserJson) throw new Error("No active session found.");
     const localUser = JSON.parse(savedUserJson);
 
     const { data, error } = await supabase
       .from("menu_items")
       .select("*")
+      .is("is_deleted", false)
       .eq("restaurant_id", localUser.restaurant_id) // Query items paired with the correct store
       .order("id", { ascending: true });
 
@@ -75,7 +91,7 @@ async function fetchMenuItems() {
       load(menuItems.value[0]);
     }
   } catch (error) {
-    alert("Error fetching data: " + error.message);
+    triggerAlert(state.language === 'en' ? "Error fetching data: " + error.message : "เกิดข้อผิดพลาดในการดึงข้อมูล", "error");
   } finally {
     isLoading.value = false;
   }
@@ -205,11 +221,11 @@ async function submitEdit() {
     if (error) throw error;
 
     await fetchMenuItems();
-    alert("Item updated successfully!");
+    triggerAlert(state.language === 'en' ? "Item updated successfully!" : "อัปเดตเมนูสำเร็จแล้ว", "success");
 
     window.scrollTo({ top: 0, behavior: "smooth" });
   } catch (error) {
-    alert("Error updating data: " + error.message);
+    triggerAlert(state.language === 'en' ? "Error updating data: " + error.message : "เกิดข้อผิดพลาดในการอัปเดตข้อมูล", "error");
   }
 }
 
@@ -310,39 +326,75 @@ async function submitAdd() {
 
     isModalOpen.value = false;
     await fetchMenuItems();
-    alert("New item added successfully!");
+    triggerAlert(state.language === 'en' ? "New item added successfully!" : "เพิ่มรายการเมนูใหม่สำเร็จแล้ว!", "success");
 
     window.scrollTo({ top: 0, behavior: "smooth" });
   } catch (error) {
-    alert("Error creating item: " + error.message);
+    triggerAlert(state.language === 'en' ? "Error creating item: " + error.message : "เกิดข้อผิดพลาดในการสร้างรายการใหม่", "error");
   }
 }
 
-// 6. Delete item from Supabase
+// 6. Soft Delete item from Supabase
 async function removeItem(item) {
-  if (!confirm(`Are you sure you want to delete ${item.name}?`)) return;
+  const confirmMsg = state.language === 'en' 
+    ? `Are you sure you want to delete ${item.name}?` 
+    : `คุณแน่ใจหรือไม่ว่าต้องการลบ ${item.nameTh || item.name}?`;
+    
+  if (!confirm(confirmMsg)) return;
 
   try {
+    // Switch from using .delete() to updating the is_deleted flag to true
     const { error } = await supabase
       .from("menu_items")
-      .delete()
+      .update({ is_deleted: true })
       .eq("id", item.id);
+      
     if (error) throw error;
 
+    // Update the UI by removing the item from the array
     menuItems.value = menuItems.value.filter((i) => i.id !== item.id);
     if (menuItems.value.length > 0) {
       load(menuItems.value[0]);
     } else {
       selected.value = null;
     }
+    
+    triggerAlert(state.language === 'en' ? "Item deleted successfully." : "ลบรายการเมนูสำเร็จแล้ว", "success");
   } catch (error) {
-    alert("Error deleting item: " + error.message);
+    triggerAlert(state.language === 'en' ? "Error deleting item: " + error.message : "เกิดข้อผิดพลาดในการลบรายการ", "error");
   }
 }
 </script>
 
 <template>
-  <div class="page-shell">
+  <div class="page-shell relative">
+    
+    <!-- แจ้งเตือน Toast Notification -->
+    <Transition
+      enter-active-class="transform ease-out duration-300 transition"
+      enter-from-class="translate-y-2 opacity-0 sm:translate-y-0 sm:translate-x-2"
+      enter-to-class="translate-y-0 opacity-100 sm:translate-x-0"
+      leave-active-class="transition ease-in duration-100"
+      leave-from-class="opacity-100"
+      leave-to-class="opacity-0"
+    >
+      <div
+        v-if="alertInfo.show"
+        class="fixed top-5 right-5 z-[999] flex items-center w-full max-w-xs p-4 rounded-xl shadow-lg border text-sm font-bold tracking-tight"
+        :class="
+          alertInfo.type === 'success'
+            ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+            : 'bg-red-50 border-red-200 text-red-800'
+        "
+      >
+        <div class="mr-3 flex-shrink-0">
+          <span v-if="alertInfo.type === 'success'"></span>
+          <span v-else></span>
+        </div>
+        <div>{{ alertInfo.message }}</div>
+      </div>
+    </Transition>
+
     <TopBar owner search-placeholder="Search menu items or ingredients" />
     <div class="content-shell">
       <SideNav :items="ownerNav" />

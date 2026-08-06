@@ -13,6 +13,7 @@ import {
   History,
   LayoutDashboard,
   LayoutGrid,
+  QrCode,
 } from "@lucide/vue";
 
 import { ref, computed } from "vue";
@@ -36,16 +37,19 @@ const totalCartCount = computed(() => {
   return cart.reduce((total, item) => total + (item.quantity || 0), 0);
 });
 
+// กำหนดไอคอนให้ครอบคลุมชื่อกลุ่มที่เราจับคู่ใหม่ (Desserts กับ Drinks)
 const iconMap = {
   All: LayoutGrid,
   Starters: Utensils,
   "Main Courses": Soup,
   Drinks: Wine,
+  Desserts: Utensils, // เพิ่มไอคอนสำหรับหมวดหมู่ของหวานที่ยุบรวมมา
   "Check Order Status": ClipboardList,
   "Live Orders": Monitor,
   "Menu Items": MenuSquare,
   Dashboard: LayoutDashboard,
   "Menu Management": MenuSquare,
+  "Table Management": QrCode,
   Orders: ClipboardList,
   "Staff Accounts": Users,
   Logout: LogOut,
@@ -54,6 +58,7 @@ const iconMap = {
   Home,
   ออเดอร์สด: Monitor,
   รายการเมนู: MenuSquare,
+  จัดการโต๊ะ: QrCode,
   ออกจากระบบ: LogOut,
 };
 
@@ -79,20 +84,14 @@ function isCustomerItemActive(item) {
   if (route.path === "/customer/menu") {
     const queryCategory = route.query.category;
 
-    if (item.label === "All")
-      return (
-        queryCategory === undefined ||
-        queryCategory === null ||
-        queryCategory === ""
-      );
-    if (item.label === "Starters") return queryCategory === "Starters";
-    if (item.label === "Main Courses") return queryCategory === "Main Courses";
-    if (item.label === "Drinks")
-      return queryCategory === "Drink" || queryCategory === "Drinks";
+    if (item.label === "All") {
+      return !queryCategory;
+    }
+
+    return queryCategory === item.label;
   }
   return route.path === item.to;
 }
-
 </script>
 
 <template>
@@ -135,7 +134,6 @@ function isCustomerItemActive(item) {
           "
         >
           <component :is="iconMap[item.label] || Home" :size="20" />
-
           {{
             item.label === "Dashboard"
               ? state.language === "en"
@@ -145,17 +143,85 @@ function isCustomerItemActive(item) {
                 ? state.language === "en"
                   ? "Menu Management"
                   : "จัดการเมนูอาหาร"
-                : item.label === "Orders"
+                : item.label === "Table Management"
                   ? state.language === "en"
-                    ? "Orders"
-                    : "คำสั่งซื้อ"
-                  : item.label === "Staff Accounts"
+                    ? "Table Management"
+                    : "จัดการโต๊ะและ QR Code"
+                  : item.label === "Orders"
                     ? state.language === "en"
-                      ? "Staff Accounts"
-                      : "บัญชีพนักงาน"
-                    : t(item.label)
+                      ? "Orders"
+                      : "คำสั่งซื้อ"
+                    : item.label === "Staff Accounts"
+                      ? state.language === "en"
+                        ? "Staff Accounts"
+                        : "บัญชีพนักงาน"
+                      : t(item.label)
           }}
         </RouterLink>
+
+        <!-- Condition check: When the loop encounters the 'Staff Accounts' menu and is on the owner URL, display the 'Table Management' menu immediately after -->
+        <RouterLink
+          v-if="
+            item.label === 'Staff Accounts' && route.path.startsWith('/owner/')
+          "
+          to="/owner/tables"
+          class="flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold transition-all duration-200 hover:bg-softGreen/50"
+          :class="
+            route.path === '/owner/tables'
+              ? 'bg-softGreen text-stone-950 font-black shadow-xs ring-1 ring-brand/10'
+              : 'text-stone-600 bg-transparent'
+          "
+        >
+          <component :is="iconMap['Table Management']" :size="20" />
+          {{
+            state.language === "en"
+              ? "Table Management"
+              : "จัดการโต๊ะและ QR Code"
+          }}
+        </RouterLink>
+
+        <!-- Condition check: When the loop encounters the 'Staff Accounts' menu and is on the owner URL, display the 'Table Management' menu immediately after -->
+        <RouterLink
+          v-if="
+            item.label === 'Staff Accounts' && route.path.startsWith('/owner/')
+          "
+          to="/owner/tables"
+          class="flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold transition-all duration-200 hover:bg-softGreen/50"
+          :class="
+            route.path === '/owner/tables'
+              ? 'bg-softGreen text-stone-950 font-black shadow-xs ring-1 ring-brand/10'
+              : 'text-stone-600 bg-transparent'
+          "
+        >
+          <component :is="iconMap['Table Management']" :size="20" />
+          {{
+            state.language === "en"
+              ? "Table Management"
+              : "จัดการโต๊ะและ QR Code"
+          }}
+        </RouterLink>
+
+        <!-- Condition check: When the loop encounters the 'Staff Accounts' menu and is on the owner URL, display the 'Table Management' menu immediately after -->
+        <RouterLink
+          v-if="
+            item.label === 'Staff Accounts' && route.path.startsWith('/owner/')
+          "
+          to="/owner/tables"
+          class="flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold transition-all duration-200 hover:bg-softGreen/50"
+          :class="
+            route.path === '/owner/tables'
+              ? 'bg-softGreen text-stone-950 font-black shadow-xs ring-1 ring-brand/10'
+              : 'text-stone-600 bg-transparent'
+          "
+        >
+          <component :is="iconMap['Table Management']" :size="20" />
+          {{
+            state.language === "en"
+              ? "Table Management"
+              : "จัดการโต๊ะและ QR Code"
+          }}
+        </RouterLink>
+
       </template>
     </div>
 
@@ -166,7 +232,6 @@ function isCustomerItemActive(item) {
         class="relative flex items-center justify-center gap-2 w-full rounded-full bg-brand px-5 py-3 text-center text-sm font-bold text-white shadow-soft transition-all active:scale-95 hover:bg-brand/90"
       >
         <span>{{ t(bottomLabel) }}</span>
-
         <span
           v-if="totalCartCount > 0"
           class="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-white px-1 text-[10px] font-black text-brand ring-2 ring-brand/20 animate-in scale-in duration-200"
@@ -186,7 +251,6 @@ function isCustomerItemActive(item) {
         <h2 class="text-lg font-black text-red-600">
           {{ state.language === "en" ? "Confirm Logout" : "ยืนยันออกจากระบบ" }}
         </h2>
-
         <p class="mt-3 text-sm text-stone-600 leading-relaxed">
           {{
             state.language === "en"
@@ -194,7 +258,6 @@ function isCustomerItemActive(item) {
               : "คุณต้องการออกจากระบบใช่หรือไม่? คุณจำเป็นต้องกรอกรหัสเข้าสู่ระบบใหม่อีกครั้งเพื่อใช้งาน"
           }}
         </p>
-
         <div class="mt-6 flex justify-end gap-3">
           <button
             class="rounded-xl border border-stone-200 px-4 py-2 font-medium text-stone-600 hover:bg-stone-50"
@@ -202,7 +265,6 @@ function isCustomerItemActive(item) {
           >
             {{ state.language === "en" ? "Cancel" : "ยกเลิก" }}
           </button>
-
           <button
             class="rounded-xl bg-red-600 px-4 py-2 font-semibold text-white shadow-md hover:bg-red-700 active:scale-95 transition-all"
             @click="confirmLogout"

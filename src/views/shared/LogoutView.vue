@@ -1,14 +1,19 @@
 <script setup>
 import { onMounted } from 'vue'
-import { useRouter } from 'vue-router'
 import { useAppState } from '../../services/appState'
 
-const router = useRouter()
 const { signOut } = useAppState()
 
 onMounted(() => {
+  // 1. เรียกใช้งานฟังก์ชันออกจากระบบเพื่อเคลียร์ State ใน Vue
   signOut()
-  router.replace('/')
+  
+  // 2. 🌟 บังคับลบข้อมูลใน sessionStorage ทิ้งทันที (สำคัญมาก) 🌟
+  sessionStorage.removeItem('zank-active-user')
+  
+  // 3. ใช้ window.location.replace แทน router.replace
+  // การทำแบบนี้คือการสั่งให้เบราว์เซอร์พาไปหน้าแรก พร้อมกับล้างหน่วยความจำของแอปพลิเคชันทิ้งทั้งหมด
+  window.location.replace('/')
 })
 </script>
 

@@ -1,6 +1,6 @@
 <script setup>
 import { computed, ref, onMounted } from "vue";
-import { Globe2, ShoppingCart, UserCircle, LogOut } from "@lucide/vue";
+import { Globe2, UserCircle, Store } from "@lucide/vue"; // Add Store icon
 import AppLogo from "./AppLogo.vue";
 import { useAppState } from "../services/appState";
 import { supabase } from "../supabaseClient";
@@ -23,15 +23,10 @@ const { state, toggleLanguage: baseToggleLanguage } = useAppState();
 
 const userEmail = ref("");
 const dbRole = ref("");
+const restaurantName = ref(""); // Add restaurant name variable
 
-/**
- * Custom toggle language function that also persists the choice globally across screens
- */
 function handleToggleLanguage() {
-  // 1. Execute the state manager's original translation switch
   baseToggleLanguage();
-
-  // 2. Persist the updated configuration state globally into localStorage
   localStorage.setItem("zank-language", state.language);
 }
 
@@ -40,7 +35,7 @@ const accountLabel = computed(() => {
   if (role === "admin" || role === "owner") {
     return state.language === "en" ? "Owner / Admin" : "เจ้าของร้าน / แอดมิน";
   }
-  if (role === "staff") {
+  if (role === "kitchen_staff" || role === "reception_staff") {
     return state.language === "en" ? "Staff" : "พนักงาน";
   }
   return state.language === "en" ? "Customer" : "ลูกค้าทั่วไป";
@@ -48,34 +43,34 @@ const accountLabel = computed(() => {
 
 async function fetchUserData() {
   try {
-    // Sync language selection from previous global layout configurations
     const savedLanguage = localStorage.getItem("zank-language");
     if (savedLanguage && state.language !== savedLanguage) {
       state.language = savedLanguage;
     }
 
-    // Retrieve global authentication session payload mappings
-    const savedUserJson = localStorage.getItem("zank-active-user");
+    const savedUserJson = sessionStorage.getItem("zank-active-user");
 
     if (savedUserJson) {
       const localUser = JSON.parse(savedUserJson);
-
       userEmail.value = localUser.email;
       dbRole.value = localUser.role || "customer";
+      restaurantName.value = localUser.restaurant_name || "ZANK Restaurant"; // Get restaurant name
       state.activeUser = localUser;
     } else {
       userEmail.value = state.language === "en" ? "Guest" : "ลูกค้าทั่วไป";
       dbRole.value = "customer";
+      restaurantName.value = "ZANK Restaurant";
     }
   } catch (error) {
-    console.error("Error fetching user data from localStorage:", error);
+    console.error("Error fetching user data:", error);
     userEmail.value = state.language === "en" ? "Guest" : "ลูกค้าทั่วไป";
     dbRole.value = "customer";
+    restaurantName.value = "ZANK Restaurant";
   }
 }
 
 async function handleLogout() {
-  localStorage.removeItem("zank-active-user");
+  sessionStorage.removeItem("zank-active-user");
   state.activeUser = null;
   await supabase.auth.signOut();
   router.push("/");
@@ -88,9 +83,10 @@ onMounted(() => {
 
 <template>
   <header
-    class="sticky top-0 z-20 flex h-20 items-center justify-between border-b border-stone-100 bg-white/95 px-5 backdrop-blur"
+    class="sticky top-0 z-20 flex h-20 items-center justify-between border-b border-stone-200 bg-white/90 px-6 backdrop-blur-md shadow-sm"
   >
-    <div class="flex items-center gap-4">
+    <!-- Left Section: Logo (Moved restaurant name out) -->
+    <div class="flex items-center gap-5">
       <AppLogo
         :to="
           dbRole?.toLowerCase() === 'admin' || dbRole?.toLowerCase() === 'owner'
@@ -100,61 +96,62 @@ onMounted(() => {
       />
     </div>
 
+    <!-- Right Section: Controls & User -->
     <div class="flex items-center gap-4">
+      <!-- Language toggle button -->
       <button
-        class="hidden items-center gap-2 rounded-full px-3 py-2 text-sm text-stone-700 transition hover:bg-pale sm:flex"
+        class="hidden items-center gap-2 rounded-full border border-stone-200 bg-white px-4 py-2 text-sm text-stone-700 shadow-sm transition hover:bg-stone-50 sm:flex"
         @click="handleToggleLanguage"
       >
-        <Globe2 :size="20" />
-        <span class="flex gap-1">
+        <Globe2 :size="16" class="text-stone-400" />
+        <span class="flex gap-1 font-bold text-[13px]">
           <span
             :class="
-              state.language === 'en'
-                ? 'font-black text-stone-900'
-                : 'font-normal text-stone-400'
+              state.language === 'en' ? 'text-stone-900' : 'text-stone-400'
             "
             >EN</span
           >
-
           <span class="text-stone-300">/</span>
-
           <span
             :class="
-              state.language === 'th'
-                ? 'font-black text-stone-900'
-                : 'font-normal text-stone-400'
+              state.language === 'th' ? 'text-stone-900' : 'text-stone-400'
             "
             >TH</span
           >
         </span>
       </button>
 
-      <!-- <RouterLink
-        v-if="dbRole?.toLowerCase() !== 'admin' && dbRole?.toLowerCase() !== 'owner' && dbRole?.toLowerCase() !== 'staff'"
-        to="/customer/cart"
-        class="relative z-30 inline-flex h-11 w-11 cursor-pointer items-center justify-center rounded-full text-stone-900 transition hover:bg-pale focus:outline-none focus:ring-2 focus:ring-brand/40"
-        :aria-label="state.language === 'en' ? 'Open cart' : 'เปิดตะกร้า'"
-        :title="state.language === 'en' ? 'Open cart' : 'เปิดตะกร้า'"
-      >
-        <ShoppingCart :size="25" />
-        <span v-if="cartCount" class="absolute -right-2 -top-2 grid h-5 w-5 place-items-center rounded-full bg-brand text-xs font-bold text-white">{{ cartCount }}</span>
-      </RouterLink> -->
-
+      <!-- User Profile & Restaurant Badge -->
       <div
-        class="relative flex items-center gap-2 rounded-full border border-stone-100 p-3 pr-4 bg-stone-50"
+        class="relative flex items-center gap-3 rounded-full border border-stone-200 p-2 pr-5 bg-white shadow-sm transition hover:shadow-md cursor-pointer"
       >
-        <div class="rounded-full text-stone-600">
-          <UserCircle :size="30" />
+        <!-- User icon -->
+        <div
+          class="flex h-9 w-9 items-center justify-center rounded-full bg-stone-100 text-stone-500"
+        >
+          <UserCircle :size="24" stroke-width="1.5" />
         </div>
 
+        <!-- Email & Role info -->
         <div class="hidden flex-col text-left leading-tight md:flex">
           <span
-            class="text-sm font-bold text-stone-900 max-w-[150px] truncate"
+            class="text-sm font-black text-stone-800 max-w-[140px] truncate"
             >{{ userEmail }}</span
           >
-          <span class="text-xs font-medium text-stone-500">{{
+          <span class="text-[11px] font-bold text-stone-500">{{
             accountLabel
           }}</span>
+        </div>
+
+        <!-- Divider between Email and Restaurant name (Displays only on medium screens and up) -->
+        <div class="hidden md:block h-7 w-px bg-stone-200 mx-1"></div>
+
+        <!-- Restaurant name info (Displays after Email) -->
+        <div class="hidden flex-col text-left leading-tight md:flex">
+          <span
+            class="text-sm font-black text-stone-800 max-w-[140px] truncate"
+            >{{ restaurantName }}</span
+          >
         </div>
       </div>
     </div>

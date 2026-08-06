@@ -1,6 +1,6 @@
 <script setup>
 import { computed, ref, watch, onMounted } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { Info, ShoppingCart } from "@lucide/vue";
 import ChatPanel from "../../components/ChatPanel.vue";
 import MobileNav from "../../components/MobileNav.vue";
@@ -8,55 +8,83 @@ import QuantityControl from "../../components/QuantityControl.vue";
 import SideNav from "../../components/SideNav.vue";
 import TagList from "../../components/TagList.vue";
 import TopBar from "../../components/TopBarCustomer.vue";
-import { categories } from "../../data/mockData";
 import { useAppState } from "../../services/appState";
-
 import { supabase } from "../../supabaseClient";
 
-// Import global state and helper functions
 const { state, addToCart, localizeMenuItem, t } = useAppState();
 const route = useRoute();
+const router = useRouter();
 
-// Local UI state variables
 const selectedItem = ref(null);
 const search = ref("");
 const detailQty = ref(1);
 const detailNote = ref("");
 const isLoading = ref(false);
 
-// Navigation menu configuration
-const navItems = [
-  { label: "Starters", to: "/customer/menu?category=Starters" },
-  {
-    label: "Main Courses",
-    to: "/customer/menu?category=Main Courses",
-    short: "Mains",
-  },
-  { label: "Drinks", to: "/customer/menu?category=Drink" },
-  {
-    label: "Check Order Status",
-    to: "/customer/order-status",
-    short: "Status",
-  },
-];
+const currentRestaurantId = computed(
+  () => route.query.restaurantId || state.restaurantId,
+);
+const currentTableId = computed(() => route.query.tableId || state.tableId);
 
-// Fetch menu items from Supabase based on the restaurant session
-async function fetchDatabaseMenuItems() {
+// 🔥 1. สร้าง Mapping เพื่อยุบรวมหมวดหมู่ย่อย ให้เป็นหมวดหมู่ใหญ่ (แสดงผลบน UI)
+const categoryMapping = {
+  Cakes: "Desserts",
+  Pastries: "Desserts",
+  Tarts: "Desserts",
+  Bakery: "Desserts",
+  Desserts: "Desserts",
+  Coffee: "Drinks",
+  Tea: "Drinks",
+  "Non-Coffee": "Drinks",
+  Drink: "Drinks",
+  Drinks: "Drinks",
+  // สามารถเพิ่มการยุบรวมของร้านอื่นๆ ได้ที่นี่ เช่น "Noodles": "Main Courses"
+};
+
+// ฟังก์ชันช่วยแปลงชื่อหมวดหมู่จาก DB เป็นชื่อกลุ่ม (ถ้าไม่มีใน Mapping ให้ใช้ชื่อเดิม)
+const getUIGroupName = (dbCategory) =>
+  categoryMapping[dbCategory] || dbCategory;
+
+// 🔥 2. สร้างเมนูตามกลุ่มใหญ่
+const navItems = computed(() => {
+  const baseParams = `restaurantId=${currentRestaurantId.value}${currentTableId.value ? `&tableId=${currentTableId.value}` : ""}`;
+
+  // แปลงหมวดหมู่ทุกอันของร้านให้เป็นชื่อกลุ่มใหญ่
+  const allGroups = (state.menuItems || []).map((item) =>
+    getUIGroupName(item.category),
+  );
+
+  // กรองชื่อกลุ่มที่ไม่ซ้ำกัน
+  const uniqueGroups = [...new Set(allGroups)].filter(Boolean);
+
+  const dynamicLinks = uniqueGroups.map((group) => ({
+    label: group,
+    to: `/customer/menu?${baseParams}&category=${encodeURIComponent(group)}`,
+    short: group,
+  }));
+
+  return [
+    ...dynamicLinks,
+    {
+      label: "Check Order Status",
+      to: `/customer/order-status?${baseParams}`,
+      short: "Status",
+    },
+  ];
+});
+
+async function fetchDatabaseMenuItems(restaurantId) {
   isLoading.value = true;
   try {
-    const savedUserJson = localStorage.getItem("zank-active-user");
-    if (!savedUserJson) throw new Error("No active session found.");
-    const localUser = JSON.parse(savedUserJson);
-
     const { data, error } = await supabase
       .from("menu_items")
       .select("*")
-      .eq("restaurant_id", localUser.restaurant_id)
+      .is("is_deleted", false)
+      .eq("restaurant_id", restaurantId)
       .order("id", { ascending: true });
 
     if (error) throw error;
 
-    // Map database fields to the application state
     state.menuItems = (data || []).map((item) => ({
       id: item.id,
       name: item.name,
@@ -78,32 +106,44 @@ async function fetchDatabaseMenuItems() {
       availability: item.availability,
     }));
   } catch (error) {
-    console.error("Error fetching database menu items:", error.message);
+    console.error("เกิดข้อผิดพลาด:", error.message);
   } finally {
     isLoading.value = false;
   }
 }
 
-// Lifecycle hook to load data on mount
 onMounted(() => {
-  fetchDatabaseMenuItems();
+  const restaurantId = route.query.restaurantId;
+  const tableId = route.query.tableId;
+
+  if (restaurantId) {
+    state.restaurantId = restaurantId;
+    if (tableId) state.tableId = tableId;
+    fetchDatabaseMenuItems(restaurantId);
+  } else if (state.restaurantId) {
+    fetchDatabaseMenuItems(state.restaurantId);
+  } else {
+    alert("Store information not found. Please scan the QR code on your table again.");
+    router.push("/");
+  }
 });
 
-// Computed property to filter menu items based on category and search query
+// 🔥 3. ตอนกรองเมนูให้เช็กจากกลุ่มใหญ่แทนหมวดหมู่ย่อย
 const filteredItems = computed(() =>
   (state.menuItems || []).map(localizeMenuItem).filter((item) => {
+    if (item.availability === "sold_out") return false;
+
     const isAllMenuMode =
       !route.query.category ||
       state.selectedCategory === "All" ||
       search.value.trim() !== "";
 
-    const isDrinkMatch =
-      item.category === "Drink" && state.selectedCategory === "Drinks";
-    const isDirectMatch = item.category === state.selectedCategory;
+    // หาชื่อกลุ่มของไอเท็มชิ้นนี้ แล้วเทียบกับกลุ่มที่ผู้ใช้เลือก
+    const itemGroup = getUIGroupName(item.category);
+    const isDirectMatch = itemGroup === state.selectedCategory;
 
-    const categoryMatch = isAllMenuMode || isDirectMatch || isDrinkMatch;
+    const categoryMatch = isAllMenuMode || isDirectMatch;
 
-    // Search logic across multiple fields (name, description, ingredients, tags)
     const text = [
       item.name,
       item.nameTh,
@@ -123,49 +163,33 @@ const filteredItems = computed(() =>
   }),
 );
 
-// Watch for route category changes to update current selection
 watch(
   () => route.query.category,
   (category) => {
     if (!category) {
       state.selectedCategory = "All";
-      return;
-    }
-
-    let targetCategory = category;
-
-    if (category === "Drinks" || category === "Drink") {
-      targetCategory = "Drink";
-    }
-
-    if (categories.includes(category) || category === "Drink") {
-      state.selectedCategory = targetCategory;
+    } else {
+      state.selectedCategory = category;
     }
   },
   { immediate: true },
 );
 
-// Switch to 'All' category if user starts typing in search
 watch(search, (newSearch) => {
-  if (newSearch.trim() !== "") {
-    state.selectedCategory = "All";
-  }
+  if (newSearch.trim() !== "") state.selectedCategory = "All";
 });
 
-// Open detailed view for a specific item
 function openDetail(item) {
   selectedItem.value = item;
   detailQty.value = 1;
   detailNote.value = "";
 }
 
-// Add the selected item with note/quantity to the global cart
 function addSelected() {
   addToCart(selectedItem.value.id, detailQty.value, detailNote.value);
   selectedItem.value = null;
 }
 
-// Helper to get current quantity of an item in the cart
 const getCartItemQuantity = computed(() => {
   return (itemId) => {
     const item = cartItems.value.find((c) => c.menuItemId === itemId);
@@ -173,7 +197,6 @@ const getCartItemQuantity = computed(() => {
   };
 });
 
-// Calculate total number of items in cart for display
 const totalCartQuantity = computed(() => {
   return cartItems.value.reduce((total, item) => total + item.quantity, 0);
 });
@@ -271,6 +294,7 @@ const cartItems = computed(() => state.cart);
                     class="rounded-full bg-red-50 px-3 py-2 text-sm font-bold text-red-700"
                     >{{ t("Sold out") }}</span
                   >
+
                   <button
                     v-if="getCartItemQuantity(item.id) === 0"
                     class="primary-btn"
@@ -292,9 +316,8 @@ const cartItems = computed(() => state.cart);
                     </button>
                     <span
                       class="font-black w-8 text-center text-lg text-gray-800"
+                      >{{ getCartItemQuantity(item.id) }}</span
                     >
-                      {{ getCartItemQuantity(item.id) }}
-                    </span>
                     <button
                       class="primary-btn w-7 h-7 flex items-center justify-center rounded-full"
                       @click="addToCart(item.id, 1)"
@@ -302,6 +325,7 @@ const cartItems = computed(() => state.cart);
                       +
                     </button>
                   </div>
+
                   <button
                     class="secondary-btn"
                     style="
@@ -403,7 +427,7 @@ const cartItems = computed(() => state.cart);
           <div class="mt-6 flex flex-wrap gap-3">
             <button
               class="primary-btn"
-              style="padding: 6px 16px !important; font-size: 15px !important;"
+              style="padding: 6px 16px !important; font-size: 15px !important"
               :disabled="selectedItem.availability === 'sold_out'"
               @click="addSelected"
             >
@@ -411,7 +435,7 @@ const cartItems = computed(() => state.cart);
             </button>
             <button
               class="secondary-btn"
-              style="padding: 6px 16px !important; font-size: 15px !important;"
+              style="padding: 6px 16px !important; font-size: 15px !important"
             >
               {{ t("Ask Chef AI about this dish") }}
             </button>

@@ -1,7 +1,7 @@
 <script setup>
-import { computed, reactive, ref, watch } from "vue";
+import { computed, reactive, ref, watch, onMounted } from "vue";
 import { Trash2 } from "@lucide/vue";
-import { useRouter } from "vue-router";
+import { useRouter, useRoute } from "vue-router"; // 🔥 เพิ่ม useRoute
 import MobileNav from "../../components/MobileNav.vue";
 import QuantityControl from "../../components/QuantityControl.vue";
 import SideNav from "../../components/SideNav.vue";
@@ -12,6 +12,8 @@ import { useAppState } from "../../services/appState";
 import { supabase } from "../../supabaseClient";
 
 const router = useRouter();
+const route = useRoute(); // 🔥 เรียกใช้งาน route
+
 // Fetch data and actions from the App's Global State
 const {
   state,
@@ -26,8 +28,18 @@ const {
   localizeMenuItem,
 } = useAppState();
 
-// Define variables for the order page
-const tableNumber = ref("T-24");
+// 🔥 ดึงค่า restaurantId และ tableId จาก URL หรือ State
+const currentRestaurantId = computed(() => route.query.restaurantId || state.restaurantId);
+const currentTableId = computed(() => route.query.tableId || state.tableId);
+
+// 🔥 ตั้งค่า tableNumber ให้ดึงมาจากระบบ แทนการฟิกซ์ T-24
+const tableNumber = ref(currentTableId.value || "");
+
+// ถ้า URL หรือ State มีการอัปเดต ให้เลขโต๊ะอัปเดตตาม
+watch(currentTableId, (newVal) => {
+  if (newVal) tableNumber.value = newVal;
+}, { immediate: true });
+
 const customerNote = ref("");
 const noteDrafts = reactive({});
 const savedNoteId = ref("");
@@ -35,22 +47,42 @@ const isSubmitting = ref(false);
 const showSuccess = ref(false);
 const lastOrderId = ref(null);
 
-// Menu items to display in the SideNav
-const navItems = [
-  { label: "Starters", to: "/customer/menu", short: "Menu" },
-  { label: "Main Courses", to: "/customer/menu", short: "Mains" },
-  { label: "Drinks", to: "/customer/menu" },
-  {
-    label: "Check Order Status",
-    to: "/customer/order-status",
-    short: "Status",
-  },
-];
+// 🔥 ทำให้ SideNav อิงตามหมวดหมู่จริงเหมือนหน้า Menu 
+const categoryMapping = {
+  "Cakes": "Desserts", "Pastries": "Desserts", "Tarts": "Desserts",
+  "Bakery": "Desserts", "Desserts": "Desserts", "Coffee": "Drinks",
+  "Tea": "Drinks", "Non-Coffee": "Drinks", "Drink": "Drinks", "Drinks": "Drinks",
+};
+
+const getUIGroupName = (dbCategory) => categoryMapping[dbCategory] || dbCategory;
+
+const navItems = computed(() => {
+  const baseParams = `restaurantId=${currentRestaurantId.value}${currentTableId.value ? `&tableId=${currentTableId.value}` : ''}`;
+  
+  const allGroups = (state.menuItems || []).map(item => getUIGroupName(item.category));
+  const uniqueGroups = [...new Set(allGroups)].filter(Boolean);
+
+  let links = uniqueGroups.map(group => ({
+    label: group,
+    to: `/customer/menu?${baseParams}&category=${encodeURIComponent(group)}`,
+    short: group
+  }));
+
+  return [
+    ...links,
+    {
+      label: "Check Order Status",
+      to: `/customer/order-status?${baseParams}`,
+      short: "Status",
+    },
+  ];
+});
 
 // Calculate items with conflicts (e.g., allergens)
 const conflictsById = computed(() =>
   Object.fromEntries(conflictItems.value.map((item) => [item.id, true])),
 );
+
 // Localize cart items based on the user's language settings
 const localizedCartItems = computed(() =>
   cartItems.value.map(localizeMenuItem),
@@ -82,6 +114,13 @@ function saveItemNote(item) {
 // Main function to submit the order to the Database
 async function submitOrder() {
   if (!cartItems.value.length || isSubmitting.value) return;
+  
+  // ป้องกันกรณีไม่พบเลขโต๊ะ
+  if (!tableNumber.value) {
+    alert("Please enter a valid table number.");
+    return;
+  }
+
   isSubmitting.value = true;
 
   try {
@@ -90,7 +129,8 @@ async function submitOrder() {
       .from("orders")
       .insert([
         {
-          table_number: tableNumber.value,
+          restaurant_id: currentRestaurantId.value, // 🔥 ส่งรหัสร้านค้าไปด้วย
+          table_number: tableNumber.value, // ดึงเลขโต๊ะมาจากช่อง Input (ที่ได้ค่าตั้งต้นจาก QR Code)
           customer_note: customerNote.value,
           total_price: total.value,
           status: "pending",
@@ -147,7 +187,8 @@ async function submitOrder() {
 // Function to navigate back to the menu page
 function handleBackToMenu() {
   state.selectedCategory = "All";
-  router.push("/customer/menu");
+  const baseParams = `restaurantId=${currentRestaurantId.value}${currentTableId.value ? `&tableId=${currentTableId.value}` : ''}`;
+  router.push(`/customer/menu?${baseParams}`);
 }
 
 // Calculate total item quantity in the cart to display on TopBar
@@ -244,14 +285,10 @@ const totalCartQuantity = computed(() => {
                   </p>
                 </div>
                 <!-- Quantity adjustment and delete button section -->
-                <div
-                  class="flex items-center justify-between gap-3 md:flex-col"
-                >
+                <div class="flex items-center justify-between gap-3 md:flex-col">
                   <QuantityControl
                     :model-value="item.quantity"
-                    @update:model-value="
-                      updateCartItem(item.id, { quantity: $event })
-                    "
+                    @update:model-value="updateCartItem(item.id, { quantity: $event })"
                   />
                   <button class="text-red-500" @click="removeFromCart(item.id)">
                     <Trash2 :size="22" />
@@ -265,17 +302,23 @@ const totalCartQuantity = computed(() => {
               <section class="section-card p-5">
                 <h2 class="font-black">Dining Information</h2>
                 <div class="mt-4 grid gap-4 sm:grid-cols-2">
-                  <label class="text-sm font-bold"
-                    >Table number<input
+                  <label class="text-sm font-bold">
+                    Table number
+                    <!-- 🔥 ผูก Input ไว้กับตัวแปร tableNumber -->
+                    <input
                       v-model="tableNumber"
                       class="field mt-2"
-                  /></label>
-                  <label class="text-sm font-bold"
-                    >Kitchen note<input
+                      placeholder="e.g., T-01"
+                    />
+                  </label>
+                  <label class="text-sm font-bold">
+                    Kitchen note
+                    <input
                       v-model="customerNote"
                       class="field mt-2"
                       placeholder="e.g., no onion, less spicy"
-                  /></label>
+                    />
+                  </label>
                 </div>
               </section>
               <!-- Order summary and checkout confirmation -->
@@ -286,16 +329,11 @@ const totalCartQuantity = computed(() => {
                     <span>Subtotal</span><strong>{{ subtotal }} Baht</strong>
                   </p>
                   <p class="flex justify-between">
-                    <span>Service Fee</span
-                    ><strong
-                      >{{ cartItems.length ? serviceFee : 0 }} Baht</strong
-                    >
+                    <span>Service Fee</span>
+                    <strong>{{ cartItems.length ? serviceFee : 0 }} Baht</strong>
                   </p>
-                  <p
-                    class="flex justify-between border-t border-stone-100 pt-3 text-lg"
-                  >
-                    <span>Total</span
-                    ><strong class="text-brand">{{ total }} Baht</strong>
+                  <p class="flex justify-between border-t border-stone-100 pt-3 text-lg">
+                    <span>Total</span><strong class="text-brand">{{ total }} Baht</strong>
                   </p>
                 </div>
                 <button
@@ -321,9 +359,7 @@ const totalCartQuantity = computed(() => {
       v-if="showSuccess"
       class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-300"
     >
-      <div
-        class="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-sm w-full mx-4"
-      >
+      <div class="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-sm w-full mx-4">
         <h2 class="text-2xl font-black text-brand">Order Sent to Kitchen!</h2>
         <p class="text-xl font-bold text-stone-800 mt-2">
           Order ID: {{ orderDisplayId }}

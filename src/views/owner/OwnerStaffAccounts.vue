@@ -50,7 +50,7 @@ async function fetchStaffData() {
   isLoading.value = true;
   try {
     // 1. Retrieve the active user session data from localStorage saved during login
-    const savedUserJson = localStorage.getItem("zank-active-user");
+    const savedUserJson = sessionStorage.getItem("zank-active-user");
     
     if (!savedUserJson) throw new Error("Please log in again.");
     

@@ -38,17 +38,9 @@ function persistMenuItems() {
 
 function readStoredCartItems() {
   try {
-    return (
-      JSON.parse(localStorage.getItem(cartStorageKey)) || [
-        { menuItemId: "arrabbiata-tagliatelle", quantity: 1, note: "" },
-        { menuItemId: "halloumi-pear-salad", quantity: 1, note: "" },
-      ]
-    );
+    return JSON.parse(localStorage.getItem(cartStorageKey)) || [];
   } catch {
-    return [
-      { menuItemId: "arrabbiata-tagliatelle", quantity: 1, note: "" },
-      { menuItemId: "halloumi-pear-salad", quantity: 1, note: "" },
-    ];
+    return [];
   }
 }
 

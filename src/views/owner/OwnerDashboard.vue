@@ -12,6 +12,11 @@ const router = useRouter();
 const { state, signOut } = useAppState();
 
 const showExitModal = ref(false);
+const dbLiveOrdersCount = ref(0);
+const recentOrders = ref([]);
+const restaurantName = ref("");
+const restaurantId = ref("");
+const menuItemsList = ref([]);
 
 const ownerNav = [
   { label: "Dashboard", to: "/owner/dashboard", short: "Home" },
@@ -21,178 +26,206 @@ const ownerNav = [
   { label: "Logout", to: "/logout", short: "Logout" },
 ];
 
-// --- Reactive Variables for Database Records ---
-const restaurantName = ref("");
-const restaurantId = ref("");
-const menuItemsList = ref([]); // Holds raw data from menu_items table
-
-// --- Dynamic Computed Properties for Cards & Content ---
-const liveOrders = computed(
-  () =>
-    state.orders.filter(
-      (order) => !["completed", "cancelled"].includes(order.status),
-    ).length,
-);
-
-// Count records explicitly set to 'available'
+const liveOrders = computed(() => dbLiveOrdersCount.value);
 const availableItemsCount = computed(
-  () => menuItemsList.value.filter((item) => item.availability === "available").length,
+  () =>
+    menuItemsList.value.filter((item) => item.availability === "available")
+      .length,
+);
+const soldOutItemsList = computed(() =>
+  menuItemsList.value.filter((item) => item.availability === "sold_out"),
 );
 
-// Extract and array-map elements configured as 'sold_out'
-const soldOutItemsList = computed(
-  () => menuItemsList.value.filter((item) => item.availability === "sold_out"),
-);
-
-function logout() {
-  signOut();
-  localStorage.removeItem("zank-active-user");
-  router.push("/");
-}
-
-function handleBackButton() {
-  showExitModal.value = true;
-  history.pushState(null, "", location.href);
-}
+// Function to determine status color styling
+const getStatusStyle = (status) => {
+  switch (status) {
+    case "pending":
+      return "bg-blue-100 text-blue-700 border-blue-200";
+    case "preparing":
+      return "bg-yellow-100 text-yellow-700 border-yellow-200";
+    case "ready":
+      return "bg-green-100 text-green-700 border-green-200";
+    case "served":
+      return "bg-stone-100 text-stone-600 border-stone-200";
+    default:
+      return "bg-gray-100 text-gray-600 border-gray-200";
+  }
+};
 
 function confirmExit() {
   signOut();
-  localStorage.removeItem("zank-active-user");
+  sessionStorage.removeItem("zank-active-user");
   showExitModal.value = false;
   router.push("/owner/login");
 }
 
-function cancelExit() {
-  showExitModal.value = false;
-}
-
-onMounted(() => {
-  history.pushState(null, "", location.href);
-  window.addEventListener("popstate", handleBackButton);
-});
-
-onUnmounted(() => {
-  window.removeEventListener("popstate", handleBackButton);
-});
-
-/**
- * Initializes language parameters and queries database for current user session values
- */
 async function initializeDashboard() {
   try {
-    // Sync language selection parameters from localstorage configs
-    const savedLanguage = localStorage.getItem("zank-language");
-    if (savedLanguage) {
-      state.language = savedLanguage;
-    }
-
-    // Pull operational credentials directly from native localStorage fallback payloads
-    const savedUserJson = localStorage.getItem("zank-active-user");
-    if (!savedUserJson) throw new Error("No active session found.");
-
+    const savedUserJson = sessionStorage.getItem("zank-active-user"); 
+    if (!savedUserJson) return;
     const localUser = JSON.parse(savedUserJson);
     restaurantId.value = localUser.restaurant_id;
-    restaurantName.value = localUser.restaurant_name || "Zank Restaurant";
 
-    // Query menu items directly from public.menu_items table
-    if (restaurantId.value) {
-      const { data: menuData, error: menuError } = await supabase
-        .from("menu_items")
-        .select("*")
-        .eq("restaurant_id", restaurantId.value);
+    // 1. Fetch menu data
+    const { data: menuData } = await supabase
+      .from("menu_items")
+      .select("*")
+      .is("is_deleted", false)
+      .eq("restaurant_id", restaurantId.value);
+    if (menuData) menuItemsList.value = menuData;
 
-      if (menuError) throw menuError;
-      if (menuData) {
-        menuItemsList.value = menuData;
-      }
+    // 2. Fetch the count of Live Orders (from the orders table)
+    const { count } = await supabase
+      .from("orders")
+      .select("id", { count: "exact", head: true })
+      .in("status", ["pending", "preparing", "ready", "served"]);
+    dbLiveOrdersCount.value = count || 0;
+
+    // 3. Fetch the list of Recent Orders (from the orders table)
+    const { data: orderData } = await supabase
+      .from("orders")
+      .select("order_code, table_number, status, created_at")
+      .order("created_at", { ascending: true })
+      .limit(5);
+    if (orderData) {
+      recentOrders.value = orderData.map((o) => ({
+        ...o,
+        time: new Date(o.created_at).toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+      }));
     }
   } catch (error) {
-    console.error("Dashboard initialization runtime failure:", error.message);
-    restaurantName.value = "Zank Restaurant";
+    console.error("Dashboard error:", error.message);
   }
 }
 
-onMounted(() => {
-  initializeDashboard();
-});
+onMounted(initializeDashboard);
 </script>
 
 <template>
   <div class="page-shell">
-    <TopBar owner search-placeholder="Search menu or orders" />
+    <TopBar owner />
     <div class="content-shell">
       <SideNav :items="ownerNav" />
       <main class="main-panel">
-        <div class="mb-6 flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <div class="flex items-center gap-3 flex-wrap">
-              <h1 class="text-4xl font-black text-stone-900">
-                {{ state.language === 'en' ? 'Owner Dashboard' : 'หน้าหลักสำหรับเจ้าของร้าน' }}
-              </h1>
-            </div>
+        <h1 class="text-4xl font-black mb-6">
+          {{
+            state.language === "en"
+              ? "Owner Dashboard"
+              : "หน้าหลักสำหรับเจ้าของร้าน"
+          }}
+        </h1>
 
-            <p class="mt-2 text-muted">
-              {{ state.language === 'en' ? 'Overview of restaurant orders and menu availability.' : 'ภาพรวมสถานะคำสั่งซื้อของร้านอาหารและการเปิดใช้งานเมนู' }}
-            </p>
-          </div>
-        </div>
-
+        <!-- Stats Cards Section -->
         <section class="grid gap-5 md:grid-cols-3">
+          <!-- Live Orders -->
           <article class="section-card p-5">
             <p class="text-sm font-bold text-muted">
-              {{ state.language === 'en' ? 'Live Orders' : 'คำสั่งซื้อปัจจุบัน' }}
+              {{
+                state.language === "en" ? "Live Orders" : "คำสั่งซื้อปัจจุบัน"
+              }}
             </p>
-            <strong class="mt-2 block text-4xl text-brand">{{ liveOrders }}</strong>
-            <span class="text-sm text-muted">
-              {{ state.language === 'en' ? 'Currently active' : 'กำลังดำเนินการ' }}
+            <strong class="mt-2 block text-4xl text-brand">{{
+              liveOrders
+            }}</strong>
+            <span class="text-xs text-stone-500 font-medium">
+              {{
+                state.language === "en"
+                  ? "Currently active in system"
+                  : "กำลังดำเนินการในระบบ"
+              }}
             </span>
           </article>
-          
+
+          <!-- Available Items -->
           <article class="section-card p-5">
             <p class="text-sm font-bold text-muted">
-              {{ state.language === 'en' ? 'Available Items' : 'เมนูพร้อมขาย' }}
+              {{ state.language === "en" ? "Available Items" : "เมนูพร้อมขาย" }}
             </p>
-            <strong class="mt-2 block text-4xl text-brand">{{ availableItemsCount }}</strong>
-            <span class="text-sm text-muted">
-              {{ state.language === 'en' ? 'Ready for customers' : 'พร้อมบริการลูกค้า' }}
+            <strong class="mt-2 block text-4xl text-brand">{{
+              availableItemsCount
+            }}</strong>
+            <span class="text-xs text-stone-500 font-medium">
+              {{
+                state.language === "en"
+                  ? "Ready for ordering"
+                  : "พร้อมให้ลูกค้าสั่งได้ทันที"
+              }}
             </span>
           </article>
-          
+
+          <!-- Sold Out Items -->
           <article class="section-card p-5">
             <p class="text-sm font-bold text-muted">
-              {{ state.language === 'en' ? 'Sold Out Items' : 'เมนูที่หมด' }}
+              {{ state.language === "en" ? "Sold Out Items" : "เมนูที่หมด" }}
             </p>
-            <strong class="mt-2 block text-4xl text-brand">{{ soldOutItemsList.length }}</strong>
-            <span class="text-sm text-muted">
-              {{ state.language === 'en' ? 'Unavailable today' : 'ไม่พร้อมขายวันนี้' }}
+            <strong class="mt-2 block text-4xl text-brand">{{
+              soldOutItemsList.length
+            }}</strong>
+            <span class="text-xs text-stone-500 font-medium">
+              {{
+                state.language === "en"
+                  ? "Items currently hidden"
+                  : "รายการที่ปิดการขายชั่วคราว"
+              }}
             </span>
           </article>
         </section>
 
+        <!-- Recent Orders & Menu Availability Section -->
         <section class="mt-6 grid gap-5 xl:grid-cols-[1fr_320px]">
+          <!-- Recent Orders List -->
           <article class="section-card overflow-hidden">
             <div class="border-b border-stone-100 p-5">
               <h2 class="font-black">
-                {{ state.language === 'en' ? 'Recent Orders' : 'คำสั่งซื้อล่าสุด' }}
+                {{
+                  state.language === "en" ? "Recent Orders" : "คำสั่งซื้อล่าสุด"
+                }}
               </h2>
             </div>
             <div class="divide-y divide-stone-100">
               <div
-                v-for="order in state.orders.slice(0, 5)"
-                :key="order.id"
-                class="grid gap-3 p-5 sm:grid-cols-[1fr_1fr_1fr_1fr] sm:items-center"
+                v-for="order in recentOrders"
+                :key="order.order_code"
+                class="grid items-center gap-4 p-5 hover:bg-stone-50 transition-colors"
+                style="grid-template-columns: 80px 1fr 120px 60px"
               >
-                <strong>#{{ order.orderNumber }}</strong>
-                <span>{{ state.language === 'en' ? 'Table' : 'โต๊ะ' }} {{ order.tableNumber }}</span>
-                <StatusPill :status="order.status" />
-                <span class="text-sm text-muted">{{ order.time }}</span>
+                <strong class="text-brand font-bold text-lg"
+                  >#{{ order.order_code }}</strong
+                >
+                <span class="text-stone-600 truncate">
+                  {{ state.language === "en" ? "Table" : "โต๊ะ" }}
+                  {{ order.table_number }}
+                </span>
+                <div class="flex justify-start">
+                  <span
+                    :class="[
+                      'px-3 py-1 rounded-full text-xs font-bold border text-center w-24',
+                      getStatusStyle(order.status),
+                    ]"
+                  >
+                    {{ order.status.toUpperCase() }}
+                  </span>
+                </div>
+                <span
+                  class="text-sm text-stone-400 font-medium text-right whitespace-nowrap"
+                >
+                  {{ order.time }}
+                </span>
               </div>
             </div>
           </article>
 
+          <!-- Menu Availability Status -->
           <article class="section-card p-5">
             <h2 class="font-black">
-              {{ state.language === 'en' ? 'Menu Availability' : 'สถานะรายการเมนู' }}
+              {{
+                state.language === "en"
+                  ? "Menu Availability"
+                  : "สถานะรายการเมนู"
+              }}
             </h2>
             <div class="mt-4 space-y-3">
               <p
@@ -201,7 +234,11 @@ onMounted(() => {
                 class="flex items-center justify-between rounded-2xl bg-pale px-4 py-3 text-sm"
               >
                 <span class="font-bold">
-                  {{ state.language === 'th' ? (item.name_th || item.name) : item.name }}
+                  {{
+                    state.language === "th"
+                      ? item.name_th || item.name
+                      : item.name
+                  }}
                 </span>
                 <StatusPill status="sold_out" />
               </p>
@@ -209,35 +246,6 @@ onMounted(() => {
           </article>
         </section>
       </main>
-    </div>
-    <MobileNav :items="ownerNav" />
-  </div>
-
-  <div
-    v-if="showExitModal"
-    class="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-  >
-    <div class="w-full max-w-md rounded-3xl bg-white p-6 shadow-xl">
-      <h2 class="text-lg font-black text-red-600">
-        {{ state.language === 'en' ? 'Login Required' : 'จำเป็นต้องเข้าสู่ระบบ' }}
-      </h2>
-
-      <p class="mt-3 text-sm text-stone-600">
-        {{ state.language === 'en' ? 'If you leave this page, you must log in again.' : 'หากคุณออกจากหน้านี้ คุณจะต้องเข้าสู่ระบบใหม่อีกครั้งเพื่อเข้าใช้งาน' }}
-      </p>
-
-      <div class="mt-6 flex justify-end gap-3">
-        <button class="rounded-xl border px-4 py-2" @click="cancelExit">
-          {{ state.language === 'en' ? 'Cancel' : 'ยกเลิก' }}
-        </button>
-
-        <button
-          class="rounded-xl bg-red-600 px-4 py-2 text-white"
-          @click="confirmExit"
-        >
-          {{ state.language === 'en' ? 'Exit' : 'ออกจากหน้านี้' }}
-        </button>
-      </div>
     </div>
   </div>
 </template>
