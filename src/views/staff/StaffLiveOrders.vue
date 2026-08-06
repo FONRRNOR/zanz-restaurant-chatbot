@@ -30,7 +30,7 @@ async function fetchOrders() {
   const { data, error } = await supabase
     .from("orders")
     .select("*, order_items (*)")
-    .order("created_at", { ascending: true }); // Sort by oldest order first
+    .order("created_at", { ascending: true });
 
   if (error) {
     console.error("Supabase Error:", error);
@@ -63,7 +63,7 @@ async function fetchOrders() {
       );
 
       return {
-        id: `${order.id}-${item.id}-${index}`, // Ensure unique id for each item
+        id: `${order.id}-${item.id}-${index}`,
         name: item.menu_name,
         quantity: item.quantity,
         note: item.note,
@@ -76,21 +76,43 @@ async function fetchOrders() {
   }));
 }
 
-// Pass order id directly instead of parsing from string
+const filteredOrders = computed(() => {
+  let result = orders.value;
+
+  if (activeFilter.value === "dine_in") {
+    result = result.filter((o) => o.type === "dine_in");
+  } else if (activeFilter.value === "allergies") {
+    result = result.filter((o) => o.allergies && o.allergies.length > 0);
+  }
+
+  return result;
+});
+
 async function updateOrderStatus(orderId, nextStatus) {
   console.log(`Updating Database - ID: ${orderId} | Status: ${nextStatus}`);
 
+  const now = new Date().toISOString();
+
+  const orderIndex = orders.value.findIndex((o) => o.id === orderId);
+  if (orderIndex !== -1) {
+    orders.value[orderIndex].status =
+      nextStatus === "pending" ? "new" : nextStatus;
+  }
+
   const { error } = await supabase
     .from("orders")
-    .update({ status: nextStatus })
+    .update({
+      status: nextStatus,
+      updated_at: now,
+    })
     .eq("id", orderId);
 
   if (error) {
     console.error("Update Status Error:", error);
     alert("Update failed: " + error.message);
+    await fetchOrders();
   } else {
     console.log("Update successful!");
-    // Refresh data immediately after update
     await fetchOrders();
   }
 }
@@ -100,12 +122,12 @@ onMounted(() => {
   fetchOrders();
 
   channel = supabase
-    .channel("public:orders") // Use standard Supabase channel name
+    .channel("public:orders")
     .on(
       "postgres_changes",
       { event: "UPDATE", schema: "public", table: "orders" },
       () => {
-        fetchOrders(); // Refresh data on update
+        fetchOrders();
       },
     )
     .subscribe();
@@ -149,20 +171,10 @@ const filterButtons = computed(() => [
   { id: "ready_soon", en: "Ready Soon", th: "ใกล้เสร็จ" },
 ]);
 
-const filteredOrders = computed(() => {
-  let list = [...orders.value];
-  if (activeFilter.value === "dine_in")
-    return list.filter((o) => o.type === "dine_in");
-  if (activeFilter.value === "allergies")
-    return list.filter(
-      (o) =>
-        (o.allergies && o.allergies.length > 0) ||
-        o.items.some((item) => item.isAllergy),
-    );
-  if (activeFilter.value === "ready_soon")
-    return list.filter((o) => o.status === "preparing");
-  return list;
-});
+function logout() {
+  signOut();
+  router.push("/");
+}
 </script>
 
 <template>
@@ -195,8 +207,8 @@ const filteredOrders = computed(() => {
             @click="activeFilter = btn.id"
             :class="
               activeFilter === btn.id
-                ? 'bg-[#2e7d32] text-white'
-                : 'bg-white text-stone-600 hover:bg-stone-100'
+                ? 'rounded-full bg-brand px-4 py-2 text-xs font-bold text-white shadow-sm'
+                : 'rounded-full bg-white px-4 py-2 text-xs font-medium text-stone-600 shadow-sm transition hover:bg-stone-50'
             "
             class="rounded-full px-6 py-2 text-sm font-semibold transition-all duration-200 shadow-sm"
           >
@@ -216,6 +228,7 @@ const filteredOrders = computed(() => {
               'border-stone-200': column.status === 'completed',
             }"
           >
+            <!-- Header Section -->
             <div
               class="mb-4 flex items-center justify-between pb-3 border-b-2 transition-colors"
               :class="{
@@ -236,6 +249,7 @@ const filteredOrders = computed(() => {
               >
                 {{ column.title }}
               </h2>
+
               <span
                 class="bg-stone-100 px-2 py-1 rounded-full text-xs font-bold"
                 >{{
@@ -248,7 +262,7 @@ const filteredOrders = computed(() => {
             <div class="flex-1 space-y-4 overflow-y-auto max-h-[700px]">
               <article
                 v-for="order in filteredOrders.filter(
-                  (o) => o.status === column.status,
+                  (order) => order.status === column.status,
                 )"
                 :key="order.id"
                 class="section-card rounded-2xl bg-white p-5 border border-stone-100 transition hover:shadow-md"
@@ -274,7 +288,7 @@ const filteredOrders = computed(() => {
                   <div
                     v-for="item in order.items"
                     :key="item.id"
-                    class="flex flex-col gap-1 mb-2"
+                    class="leading-relaxed"
                   >
                     <div class="flex gap-2">
                       <span class="text-brand font-bold"
@@ -327,7 +341,7 @@ const filteredOrders = computed(() => {
                   &ldquo;{{ order.customerNote }}&rdquo;
                 </div>
 
-                <div class="mt-5 pt-3">
+                <div class="mt-5 pt-4 border-t border-stone-50">
                   <button
                     v-if="column.action"
                     @click="updateOrderStatus(order.id, column.next)"
@@ -335,6 +349,7 @@ const filteredOrders = computed(() => {
                   >
                     {{ column.action }}
                   </button>
+
                   <div
                     v-else
                     class="rounded-xl bg-stone-100 py-2 text-center text-xs font-bold text-stone-500 uppercase"
