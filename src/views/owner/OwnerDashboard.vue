@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, onMounted, onUnmounted } from "vue";
+import { computed, ref, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import MobileNav from "../../components/MobileNav.vue";
 import SideNav from "../../components/SideNav.vue";
@@ -11,10 +11,8 @@ import { supabase } from "../../supabaseClient";
 const router = useRouter();
 const { state, signOut } = useAppState();
 
-const showExitModal = ref(false);
 const dbLiveOrdersCount = ref(0);
 const recentOrders = ref([]);
-const restaurantName = ref("");
 const restaurantId = ref("");
 const menuItemsList = ref([]);
 
@@ -36,7 +34,6 @@ const soldOutItemsList = computed(() =>
   menuItemsList.value.filter((item) => item.availability === "sold_out"),
 );
 
-// Function to determine status color styling
 const getStatusStyle = (status) => {
   switch (status) {
     case "pending":
@@ -52,41 +49,41 @@ const getStatusStyle = (status) => {
   }
 };
 
-function confirmExit() {
-  signOut();
-  sessionStorage.removeItem("zank-active-user");
-  showExitModal.value = false;
-  router.push("/owner/login");
-}
-
 async function initializeDashboard() {
   try {
-    const savedUserJson = sessionStorage.getItem("zank-active-user"); 
+    const savedUserJson = sessionStorage.getItem("zank-active-user");
     if (!savedUserJson) return;
     const localUser = JSON.parse(savedUserJson);
     restaurantId.value = localUser.restaurant_id;
 
-    // 1. Fetch menu data
+    if (!restaurantId.value) return;
+
+    // 1. ดึงข้อมูลเมนูของร้าน
     const { data: menuData } = await supabase
       .from("menu_items")
       .select("*")
       .is("is_deleted", false)
       .eq("restaurant_id", restaurantId.value);
+
     if (menuData) menuItemsList.value = menuData;
 
-    // 2. Fetch the count of Live Orders (from the orders table)
+    // 2. ดึงจำนวน Live Orders
     const { count } = await supabase
       .from("orders")
       .select("id", { count: "exact", head: true })
+      .eq("restaurant_id", restaurantId.value)
       .in("status", ["pending", "preparing", "ready", "served"]);
+
     dbLiveOrdersCount.value = count || 0;
 
-    // 3. Fetch the list of Recent Orders (from the orders table)
+    // 3. ดึงรายการ Recent Orders (เพิ่ม limit จาก 5 เป็น 20 เพื่อให้ข้อมูลยาวพอที่จะเลื่อนได้)
     const { data: orderData } = await supabase
       .from("orders")
       .select("order_code, table_number, status, created_at")
-      .order("created_at", { ascending: true })
-      .limit(5);
+      .eq("restaurant_id", restaurantId.value)
+      .order("created_at", { ascending: false })
+      .limit(20);
+
     if (orderData) {
       recentOrders.value = orderData.map((o) => ({
         ...o,
@@ -120,7 +117,6 @@ onMounted(initializeDashboard);
 
         <!-- Stats Cards Section -->
         <section class="grid gap-5 md:grid-cols-3">
-          <!-- Live Orders -->
           <article class="section-card p-5">
             <p class="text-sm font-bold text-muted">
               {{
@@ -139,7 +135,6 @@ onMounted(initializeDashboard);
             </span>
           </article>
 
-          <!-- Available Items -->
           <article class="section-card p-5">
             <p class="text-sm font-bold text-muted">
               {{ state.language === "en" ? "Available Items" : "เมนูพร้อมขาย" }}
@@ -156,7 +151,6 @@ onMounted(initializeDashboard);
             </span>
           </article>
 
-          <!-- Sold Out Items -->
           <article class="section-card p-5">
             <p class="text-sm font-bold text-muted">
               {{ state.language === "en" ? "Sold Out Items" : "เมนูที่หมด" }}
@@ -177,43 +171,59 @@ onMounted(initializeDashboard);
         <!-- Recent Orders & Menu Availability Section -->
         <section class="mt-6 grid gap-5 xl:grid-cols-[1fr_320px]">
           <!-- Recent Orders List -->
-          <article class="section-card overflow-hidden">
-            <div class="border-b border-stone-100 p-5">
+          <article class="section-card overflow-hidden flex flex-col">
+            <div
+              class="border-b border-stone-100 p-5 bg-white sticky top-0 z-10"
+            >
               <h2 class="font-black">
                 {{
                   state.language === "en" ? "Recent Orders" : "คำสั่งซื้อล่าสุด"
                 }}
               </h2>
             </div>
-            <div class="divide-y divide-stone-100">
-              <div
-                v-for="order in recentOrders"
-                :key="order.order_code"
-                class="grid items-center gap-4 p-5 hover:bg-stone-50 transition-colors"
-                style="grid-template-columns: 80px 1fr 120px 60px"
-              >
-                <strong class="text-brand font-bold text-lg"
-                  >#{{ order.order_code }}</strong
+
+            <!-- ส่วนแสดงรายการออเดอร์ที่ตั้งค่าให้เลื่อนได้ -->
+            <div
+              class="max-h-[400px] overflow-y-auto divide-y divide-stone-100"
+            >
+              <template v-if="recentOrders.length > 0">
+                <div
+                  v-for="order in recentOrders"
+                  :key="order.order_code"
+                  class="grid items-center gap-4 p-5 hover:bg-stone-50 transition-colors bg-white"
+                  style="grid-template-columns: 80px 1fr 120px 60px"
                 >
-                <span class="text-stone-600 truncate">
-                  {{ state.language === "en" ? "Table" : "โต๊ะ" }}
-                  {{ order.table_number }}
-                </span>
-                <div class="flex justify-start">
-                  <span
-                    :class="[
-                      'px-3 py-1 rounded-full text-xs font-bold border text-center w-24',
-                      getStatusStyle(order.status),
-                    ]"
+                  <strong class="text-brand font-bold text-lg"
+                    >#{{ order.order_code }}</strong
                   >
-                    {{ order.status.toUpperCase() }}
+                  <span class="text-stone-600 truncate">
+                    {{ state.language === "en" ? "Table" : "โต๊ะ" }}
+                    {{ order.table_number }}
+                  </span>
+                  <div class="flex justify-start">
+                    <span
+                      :class="[
+                        'px-3 py-1 rounded-full text-xs font-bold border text-center w-24',
+                        getStatusStyle(order.status),
+                      ]"
+                    >
+                      {{ order.status.toUpperCase() }}
+                    </span>
+                  </div>
+                  <span
+                    class="text-sm text-stone-400 font-medium text-right whitespace-nowrap"
+                  >
+                    {{ order.time }}
                   </span>
                 </div>
-                <span
-                  class="text-sm text-stone-400 font-medium text-right whitespace-nowrap"
-                >
-                  {{ order.time }}
-                </span>
+              </template>
+
+              <div v-else class="p-8 text-center text-stone-400 text-sm">
+                {{
+                  state.language === "en"
+                    ? "No recent orders found."
+                    : "ยังไม่มีคำสั่งซื้อในขณะนี้"
+                }}
               </div>
             </div>
           </article>
@@ -228,20 +238,29 @@ onMounted(initializeDashboard);
               }}
             </h2>
             <div class="mt-4 space-y-3">
-              <p
-                v-for="item in soldOutItemsList"
-                :key="item.id"
-                class="flex items-center justify-between rounded-2xl bg-pale px-4 py-3 text-sm"
-              >
-                <span class="font-bold">
-                  {{
-                    state.language === "th"
-                      ? item.name_th || item.name
-                      : item.name
-                  }}
-                </span>
-                <StatusPill status="sold_out" />
-              </p>
+              <div v-if="soldOutItemsList.length > 0">
+                <p
+                  v-for="item in soldOutItemsList"
+                  :key="item.id"
+                  class="flex items-center justify-between rounded-2xl bg-pale px-4 py-3 text-sm mb-2"
+                >
+                  <span class="font-bold">
+                    {{
+                      state.language === "th"
+                        ? item.name_th || item.name
+                        : item.name
+                    }}
+                  </span>
+                  <StatusPill status="sold_out" />
+                </p>
+              </div>
+              <div v-else class="text-center py-6 text-stone-400 text-sm">
+                {{
+                  state.language === "en"
+                    ? "All items are available."
+                    : "เมนูทุกรายการพร้อมขายปกติ"
+                }}
+              </div>
             </div>
           </article>
         </section>

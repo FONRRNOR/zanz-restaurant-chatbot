@@ -163,7 +163,7 @@ async function cancelOrder(orderId) {
 
 function getStatusLabel(statusKey) {
   const labels = {
-    active: state.language === "en" ? "Active (All)" : "ปัจจุบัน (ทั้งหมด)",
+    active: state.language === "en" ? "Active" : "ปัจจุบัน (ทั้งหมด)",
     kitchen: state.language === "en" ? "Kitchen" : "ในครัว (ใหม่/กำลังทำ)",
     ready: state.language === "en" ? "To Serve" : "รอเสิร์ฟ",
     completed: state.language === "en" ? "To Pay" : "รอเช็คบิล",
@@ -285,32 +285,45 @@ async function checkoutAndClearTable(order) {
   if (!confirmCheckout) return;
 
   try {
+    // 1. อัปเดตสถานะออเดอร์นี้ให้เป็น "paid"
+    const { error: updateError } = await supabase
+      .from("orders")
+      .update({ status: "paid" })
+      .eq("id", order.id);
+
+    if (updateError) throw updateError;
+
+    // 💡 2. ดึงค่า table_id และ restaurant_id ให้ชัวร์ว่าตรงกับตาราง table_sessions
+    // (ลองเช็คว่าในตาราง orders ของคุณเก็บฟิลด์ไหนเป็น ID โต๊ะหลัก ถ้าใช้ table_number ให้เช็คว่าตรงกันไหม)
+    const targetTableId = order.raw.table_id || order.raw.table_number;
+    const targetRestaurantId = order.raw.restaurant_id;
+
+    console.log("Clearing table session for:", {
+      targetTableId,
+      targetRestaurantId,
+    });
+
+    // 3. เคลียร์โต๊ะผ่าน RPC
     const { error: rpcError } = await supabase.rpc("clear_table_session", {
-      p_table_id: order.raw.table_number,
-      p_restaurant_id: order.raw.restaurant_id,
+      p_table_id: targetTableId,
+      p_restaurant_id: targetRestaurantId,
     });
 
     if (rpcError) throw rpcError;
 
-    const { error: updateError } = await supabase
-      .from("orders")
-      .update({ status: "paid" })
-      .eq("table_number", order.raw.table_number)
-      .neq("status", "paid")
-      .neq("status", "cancelled");
-
-    if (updateError) throw updateError;
-
+    // 4. แจ้งเตือนความสำเร็จ
     alert(
       state.language === "en"
         ? "Table cleared successfully! Ready for next customer."
-        : "เคลียร์โต๊ะสำเร็จ! ลูกค้าใหม่สามารถสแกน QR Code ได้เลย",
+        : "รับเงินและเคลียร์โต๊ะสำเร็จ! ลูกค้าใหม่สามารถสแกน QR Code ได้เลย",
     );
 
-    if (filter.value === "active") {
-      selected.value = null;
+    // 5. อัปเดต UI ทันที
+    if (filter.value === "active" || filter.value === "completed") {
+      selected.value = null; // ปิดกล่อง detail ขวา
     }
 
+    // ดึงข้อมูลใหม่เพื่อรีเฟรชหน้าจอ
     fetchOrders();
   } catch (err) {
     console.error("Error clearing table:", err);
@@ -426,7 +439,7 @@ async function checkoutAndClearTable(order) {
               </h3>
               <!-- Badge บอกจำนวนออเดอร์ทั้งหมดที่แสดงอยู่ -->
               <span
-                class="bg-stone-200 text-stone-600 text-md font-bold px-3 py-1 rounded-full"
+                class="bg-red-600 text-white text-md font-bold px-3 py-1 rounded-full"
               >
                 {{ filteredOrders.length }}
               </span>
