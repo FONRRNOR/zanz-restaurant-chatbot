@@ -1,7 +1,7 @@
 <script setup>
 import { MailCheck } from '@lucide/vue'
 import { ref } from 'vue'
-import AppLogo from '../../components/AppLogo.vue'
+import AppLogo from '../../components/common/AppLogo.vue'
 
 // Manage page steps (1 = Enter backup email, 2 = Enter OTP, 3 = Set new password with web email, 4 = Success)
 const step = ref(1);

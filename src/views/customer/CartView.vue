@@ -1,13 +1,20 @@
 <script setup>
 import { computed, reactive, ref, watch, onMounted } from "vue";
 import { Trash2 } from "@lucide/vue";
-import { useRouter, useRoute } from "vue-router"; // 🔥 เพิ่ม useRoute
-import MobileNav from "../../components/MobileNav.vue";
-import QuantityControl from "../../components/QuantityControl.vue";
-import SideNav from "../../components/SideNav.vue";
-import TagList from "../../components/TagList.vue";
-import TopBar from "../../components/TopBarCustomer.vue";
-import ChatPanel from "../../components/ChatPanel.vue";
+import { useRouter, useRoute } from "vue-router";
+
+// โฟลเดอร์ common/
+import MobileNav from "../../components/common/MobileNav.vue";
+import SideNav from "../../components/common/SideNav.vue";
+import TagList from "../../components/common/TagList.vue";
+import TopBar from "../../components/common/TopBarCustomer.vue";
+
+// โฟลเดอร์ menu/
+import QuantityControl from "../../components/menu/QuantityControl.vue";
+
+// โฟลเดอร์ chat/
+import ChatPanel from "../../components/chat/ChatPanel.vue";
+
 import { useAppState } from "../../services/appState";
 import { supabase } from "../../supabaseClient";
 
@@ -29,16 +36,22 @@ const {
 } = useAppState();
 
 // 🔥 ดึงค่า restaurantId และ tableId จาก URL หรือ State
-const currentRestaurantId = computed(() => route.query.restaurantId || state.restaurantId);
+const currentRestaurantId = computed(
+  () => route.query.restaurantId || state.restaurantId,
+);
 const currentTableId = computed(() => route.query.tableId || state.tableId);
 
 // 🔥 ตั้งค่า tableNumber ให้ดึงมาจากระบบ แทนการฟิกซ์ T-24
 const tableNumber = ref(currentTableId.value || "");
 
 // ถ้า URL หรือ State มีการอัปเดต ให้เลขโต๊ะอัปเดตตาม
-watch(currentTableId, (newVal) => {
-  if (newVal) tableNumber.value = newVal;
-}, { immediate: true });
+watch(
+  currentTableId,
+  (newVal) => {
+    if (newVal) tableNumber.value = newVal;
+  },
+  { immediate: true },
+);
 
 const customerNote = ref("");
 const noteDrafts = reactive({});
@@ -47,25 +60,35 @@ const isSubmitting = ref(false);
 const showSuccess = ref(false);
 const lastOrderId = ref(null);
 
-// 🔥 ทำให้ SideNav อิงตามหมวดหมู่จริงเหมือนหน้า Menu 
+// 🔥 ทำให้ SideNav อิงตามหมวดหมู่จริงเหมือนหน้า Menu
 const categoryMapping = {
-  "Cakes": "Desserts", "Pastries": "Desserts", "Tarts": "Desserts",
-  "Bakery": "Desserts", "Desserts": "Desserts", "Coffee": "Drinks",
-  "Tea": "Drinks", "Non-Coffee": "Drinks", "Drink": "Drinks", "Drinks": "Drinks",
+  Cakes: "Desserts",
+  Pastries: "Desserts",
+  Tarts: "Desserts",
+  Bakery: "Desserts",
+  Desserts: "Desserts",
+  Coffee: "Drinks",
+  Tea: "Drinks",
+  "Non-Coffee": "Drinks",
+  Drink: "Drinks",
+  Drinks: "Drinks",
 };
 
-const getUIGroupName = (dbCategory) => categoryMapping[dbCategory] || dbCategory;
+const getUIGroupName = (dbCategory) =>
+  categoryMapping[dbCategory] || dbCategory;
 
 const navItems = computed(() => {
-  const baseParams = `restaurantId=${currentRestaurantId.value}${currentTableId.value ? `&tableId=${currentTableId.value}` : ''}`;
-  
-  const allGroups = (state.menuItems || []).map(item => getUIGroupName(item.category));
+  const baseParams = `restaurantId=${currentRestaurantId.value}${currentTableId.value ? `&tableId=${currentTableId.value}` : ""}`;
+
+  const allGroups = (state.menuItems || []).map((item) =>
+    getUIGroupName(item.category),
+  );
   const uniqueGroups = [...new Set(allGroups)].filter(Boolean);
 
-  let links = uniqueGroups.map(group => ({
+  let links = uniqueGroups.map((group) => ({
     label: group,
     to: `/customer/menu?${baseParams}&category=${encodeURIComponent(group)}`,
-    short: group
+    short: group,
   }));
 
   return [
@@ -114,7 +137,7 @@ function saveItemNote(item) {
 // Main function to submit the order to the Database
 async function submitOrder() {
   if (!cartItems.value.length || isSubmitting.value) return;
-  
+
   // ป้องกันกรณีไม่พบเลขโต๊ะ
   if (!tableNumber.value) {
     alert("Please enter a valid table number.");
@@ -142,9 +165,9 @@ async function submitOrder() {
     if (orderError) throw orderError;
 
     const orderId = orderData.id;
-    lastOrderId.value = orderId; 
+    lastOrderId.value = orderId;
 
-    localStorage.setItem('zank-active-order-id', orderId);
+    localStorage.setItem("zank-active-order-id", orderId);
 
     // 2. Prepare item data for the 'order_items' table
     const orderItemsPayload = cartItems.value.map((item) => ({
@@ -187,7 +210,7 @@ async function submitOrder() {
 // Function to navigate back to the menu page
 function handleBackToMenu() {
   state.selectedCategory = "All";
-  const baseParams = `restaurantId=${currentRestaurantId.value}${currentTableId.value ? `&tableId=${currentTableId.value}` : ''}`;
+  const baseParams = `restaurantId=${currentRestaurantId.value}${currentTableId.value ? `&tableId=${currentTableId.value}` : ""}`;
   router.push(`/customer/menu?${baseParams}`);
 }
 
@@ -285,10 +308,14 @@ const totalCartQuantity = computed(() => {
                   </p>
                 </div>
                 <!-- Quantity adjustment and delete button section -->
-                <div class="flex items-center justify-between gap-3 md:flex-col">
+                <div
+                  class="flex items-center justify-between gap-3 md:flex-col"
+                >
                   <QuantityControl
                     :model-value="item.quantity"
-                    @update:model-value="updateCartItem(item.id, { quantity: $event })"
+                    @update:model-value="
+                      updateCartItem(item.id, { quantity: $event })
+                    "
                   />
                   <button class="text-red-500" @click="removeFromCart(item.id)">
                     <Trash2 :size="22" />
@@ -330,10 +357,15 @@ const totalCartQuantity = computed(() => {
                   </p>
                   <p class="flex justify-between">
                     <span>Service Fee</span>
-                    <strong>{{ cartItems.length ? serviceFee : 0 }} Baht</strong>
+                    <strong
+                      >{{ cartItems.length ? serviceFee : 0 }} Baht</strong
+                    >
                   </p>
-                  <p class="flex justify-between border-t border-stone-100 pt-3 text-lg">
-                    <span>Total</span><strong class="text-brand">{{ total }} Baht</strong>
+                  <p
+                    class="flex justify-between border-t border-stone-100 pt-3 text-lg"
+                  >
+                    <span>Total</span
+                    ><strong class="text-brand">{{ total }} Baht</strong>
                   </p>
                 </div>
                 <button
@@ -359,7 +391,9 @@ const totalCartQuantity = computed(() => {
       v-if="showSuccess"
       class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-300"
     >
-      <div class="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-sm w-full mx-4">
+      <div
+        class="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-sm w-full mx-4"
+      >
         <h2 class="text-2xl font-black text-brand">Order Sent to Kitchen!</h2>
         <p class="text-xl font-bold text-stone-800 mt-2">
           Order ID: {{ orderDisplayId }}

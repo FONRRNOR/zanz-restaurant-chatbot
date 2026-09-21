@@ -1,5 +1,5 @@
 <script setup>
-import { useAppState } from '../services/appState'
+import { useAppState } from '../../services/appState'
 
 defineProps({
   tags: { type: Array, default: () => [] },

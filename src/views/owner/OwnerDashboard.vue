@@ -1,10 +1,9 @@
 <script setup>
 import { computed, ref, onMounted } from "vue";
 import { useRouter } from "vue-router";
-import MobileNav from "../../components/MobileNav.vue";
-import SideNav from "../../components/SideNav.vue";
-import StatusPill from "../../components/StatusPill.vue";
-import TopBar from "../../components/TopBar.vue";
+import SideNav from "../../components/common/SideNav.vue";
+import StatusPill from "../../components/common/StatusPill.vue";
+import TopBar from "../../components/common/TopBar.vue";
 import { useAppState } from "../../services/appState";
 import { supabase } from "../../supabaseClient";
 

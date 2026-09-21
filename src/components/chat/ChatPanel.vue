@@ -1,7 +1,7 @@
 <script setup>
 import { Bot, Send } from '@lucide/vue'
 import { ref } from 'vue'
-import { useAppState } from '../services/appState'
+import { useAppState } from '../../services/appState';
 
 const { recommend, addToCart, localizeMenuItem, t } = useAppState()
 const input = ref('')
@@ -35,12 +35,22 @@ function send(text = input.value) {
 </script>
 
 <template>
-  <aside class="flex min-h-[520px] flex-col rounded-3xl bg-white p-5 shadow-soft">
-    <div class="mb-4 flex items-center gap-3 border-b border-stone-100 pb-4">
-      <div class="grid h-11 w-11 place-items-center rounded-2xl bg-brand text-white">
-        <Bot :size="24" />
+  <aside class="flex min-h-[520px] flex-col rounded-3xl bg-white p-5 shadow-soft relative">
+    <div class="mb-4 flex items-center justify-between border-b border-stone-100 pb-4">
+      <div class="flex items-center gap-3">
+        <div class="grid h-11 w-11 place-items-center rounded-2xl bg-brand text-white">
+          <Bot :size="24" />
+        </div>
+        <h2 class="font-bold text-brand">{{ t('Chef AI') }}</h2>
       </div>
-      <h2 class="font-bold text-brand">{{ t('Chef AI') }}</h2>
+
+      <!-- ปุ่มปิด (X) ขนาดใหญ่ขึ้น กดง่ายขึ้น -->
+      <button 
+        class="w-18 h-18 rounded-full bg-stone-100 flex items-center justify-center text-stone-600 hover:bg-stone-200 active:scale-95 transition-all text-lg font-bold"
+        aria-label="Close"
+      >
+        ✕
+      </button>
     </div>
 
     <div class="flex-1 space-y-4 overflow-auto pr-1">

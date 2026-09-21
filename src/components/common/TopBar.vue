@@ -1,9 +1,9 @@
 <script setup>
 import { computed, ref, onMounted } from "vue";
 import { Globe2, UserCircle, Store } from "@lucide/vue"; // Add Store icon
-import AppLogo from "./AppLogo.vue";
-import { useAppState } from "../services/appState";
-import { supabase } from "../supabaseClient";
+import AppLogo from "../common/AppLogo.vue";
+import { useAppState } from "../../services/appState.js";
+import { supabase } from "../../supabaseClient.js";
 import { useRouter } from "vue-router";
 
 defineProps({

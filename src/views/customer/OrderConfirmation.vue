@@ -1,11 +1,16 @@
 <script setup>
 import { ref, onMounted, computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import TopBar from "../../components/TopBarCustomer.vue";
-import SideNav from "../../components/SideNav.vue";
-import MobileNav from "../../components/MobileNav.vue";
-import ChatPanel from "../../components/ChatPanel.vue";
-import StatusPill from "../../components/StatusPill.vue";
+
+// โฟลเดอร์ common/
+import TopBar from "../../components/common/TopBarCustomer.vue";
+import SideNav from "../../components/common/SideNav.vue";
+import MobileNav from "../../components/common/MobileNav.vue";
+import StatusPill from "../../components/common/StatusPill.vue";
+
+// โฟลเดอร์ chat/
+import ChatPanel from "../../components/chat/ChatPanel.vue";
+
 import { supabase } from "../../supabaseClient";
 import { useAppState } from "../../services/appState"; // 🔥 ดึง state มาใช้
 

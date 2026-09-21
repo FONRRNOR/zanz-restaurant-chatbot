@@ -1,10 +1,15 @@
 <script setup>
 import { ref, onMounted, computed } from "vue";
 import { useRouter, useRoute } from "vue-router";
-import ChatPanel from "../../components/ChatPanel.vue";
-import MobileNav from "../../components/MobileNav.vue";
-import SideNav from "../../components/SideNav.vue";
-import TopBar from "../../components/TopBarCustomer.vue";
+
+// โฟลเดอร์ chat/
+import ChatPanel from "../../components/chat/ChatPanel.vue";
+
+// โฟลเดอร์ common/
+import MobileNav from "../../components/common/MobileNav.vue";
+import SideNav from "../../components/common/SideNav.vue";
+import TopBar from "../../components/common/TopBarCustomer.vue";
+
 import { supabase } from "../../supabaseClient";
 import { useAppState } from "../../services/appState"; // 🔥 ดึง state มาใช้สร้าง Dynamic Menu
 

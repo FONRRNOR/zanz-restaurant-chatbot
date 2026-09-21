@@ -1,12 +1,14 @@
 <script setup>
 import { reactive, ref, onMounted } from "vue";
 import { createClient } from "@supabase/supabase-js";
-import MobileNav from "../../components/MobileNav.vue";
-import SideNav from "../../components/SideNav.vue";
-import TopBar from "../../components/TopBar.vue";
+import bcrypt from "bcryptjs";
+
+import MobileNav from "../../components/common/MobileNav.vue";
+import SideNav from "../../components/common/SideNav.vue";
+import TopBar from "../../components/common/TopBar.vue";
+
 import { useAppState } from "../../services/appState";
 import { supabase } from "../../supabaseClient";
-import bcrypt from "bcryptjs";
 
 const { state } = useAppState();
 

@@ -1,11 +1,11 @@
 <script setup>
 import { ref, computed, onMounted } from "vue";
 import { useRouter } from "vue-router";
-import MobileNav from "../../components/MobileNav.vue";
-import SideNav from "../../components/SideNav.vue";
-import StatusPill from "../../components/StatusPill.vue";
-import TagList from "../../components/TagList.vue";
-import TopBar from "../../components/TopBar.vue";
+import MobileNav from "../../components/common/MobileNav.vue";
+import SideNav from "../../components/common/SideNav.vue";
+import StatusPill from "../../components/common/StatusPill.vue";
+import TagList from "../../components/common/TagList.vue";
+import TopBar from "../../components/common/TopBar.vue";
 import { useAppState } from "../../services/appState";
 import { supabase } from "../../supabaseClient";
 
@@ -13,6 +13,7 @@ const router = useRouter();
 const { state, signOut } = useAppState();
 
 const menuItems = ref([]);
+const isLoading = ref(false);
 const sortBy = ref("category");
 const sortOrder = ref("asc");
 
@@ -44,18 +45,66 @@ const navItems = computed(() => [
   },
 ]);
 
+// Trigger custom notification toast
+function triggerAlert(message, type = "success") {
+  alert.value = { show: true, message, type };
+  setTimeout(() => {
+    alert.value.show = false;
+  }, 3000);
+}
+
+// Asynchronously fetch menu items from Supabase filtered by the staff user's restaurant ID
 async function fetchMenuItems() {
+  isLoading.value = true;
   try {
+    const savedUserJson = sessionStorage.getItem("zank-active-user");
+    if (!savedUserJson) throw new Error("No active session found.");
+    const localUser = JSON.parse(savedUserJson);
+
+    if (!localUser.restaurant_id) {
+      throw new Error("No restaurant ID associated with this account.");
+    }
+
     const { data, error } = await supabase
       .from("menu_items")
       .select("*")
       .is("is_deleted", false)
+      .eq("restaurant_id", localUser.restaurant_id)
       .order("id", { ascending: true });
 
     if (error) throw error;
-    menuItems.value = data || [];
+
+    menuItems.value = (data || []).map((item) => ({
+      id: item.id,
+      name: item.name,
+      name_th: item.name_th,
+      category: item.category,
+      category_th: item.category_th,
+      price: item.price,
+      image: item.image,
+      description: item.description,
+      description_th: item.description_th,
+      ingredients: item.ingredients || [],
+      ingredients_th: item.ingredients_th || [],
+      allergens: item.allergens || [],
+      allergens_th: item.allergens_th || [],
+      dietary_tags: item.dietary_tags || [],
+      dietary_tags_th: item.dietary_tags_th || [],
+      taste_profiles: item.taste_profiles || [],
+      taste_profiles_th: item.taste_profiles_th || [],
+      spice_level: item.spice_level,
+      availability: item.availability,
+    }));
   } catch (error) {
     console.error("Error fetching menu items:", error.message);
+    triggerAlert(
+      state.language === "en"
+        ? "Error fetching data: " + error.message
+        : "เกิดข้อผิดพลาดในการดึงข้อมูลเมนู",
+      "error",
+    );
+  } finally {
+    isLoading.value = false;
   }
 }
 
@@ -73,7 +122,6 @@ const sortedMenuItems = computed(() => {
       let weightA = orderConfig[a.category] || 99;
       let weightB = orderConfig[b.category] || 99;
 
-      // If in the same category and sharing the same weight, sort by ID instead of name
       if (weightA === weightB) {
         return (Number(a.id) - Number(b.id)) * modifier;
       }
@@ -106,27 +154,19 @@ function handleSort(field) {
   }
 }
 
-// Trigger custom notification toast
-function triggerAlert(message, type = "success") {
-  alert.value = { show: true, message, type };
-  setTimeout(() => {
-    alert.value.show = false;
-  }, 3000);
-}
-
+// Asynchronously toggle item availability between available and sold_out with rollback on error
 async function toggleAvailability(itemId, currentStatus) {
   const nextStatus = currentStatus === "available" ? "sold_out" : "available";
 
-  // Find item and keep backup in case of network failure
   const itemIndex = menuItems.value.findIndex((x) => x.id === itemId);
   if (itemIndex === -1) return;
   const originalStatus = menuItems.value[itemIndex].availability;
 
   try {
-    // 1. Reactive Update: Update local state immediately for a snappy UI experience
+    // 1. Optimistic UI update
     menuItems.value[itemIndex].availability = nextStatus;
 
-    // 2. Database Update: Send changes to Supabase
+    // 2. Asynchronously persist update in Supabase
     const { error } = await supabase
       .from("menu_items")
       .update({ availability: nextStatus })
@@ -134,7 +174,7 @@ async function toggleAvailability(itemId, currentStatus) {
 
     if (error) throw error;
 
-    // 3. Status Notification: Trigger success toast
+    // 3. Show notification
     const itemName =
       state.language === "en"
         ? menuItems.value[itemIndex].name
@@ -147,7 +187,7 @@ async function toggleAvailability(itemId, currentStatus) {
 
     triggerAlert(successMsg, "success");
   } catch (error) {
-    // Rollback local state if database communication fails
+    // Roll back status if update fails
     if (menuItems.value[itemIndex]) {
       menuItems.value[itemIndex].availability = originalStatus;
     }
@@ -174,6 +214,7 @@ onMounted(() => {
 
 <template>
   <div class="page-shell relative">
+    <!-- Item Details Modal -->
     <div
       v-if="selectedItem"
       class="fixed inset-0 z-50 grid place-items-center bg-black/30 p-4"
@@ -291,6 +332,8 @@ onMounted(() => {
         </div>
       </section>
     </div>
+
+    <!-- Alert Toast -->
     <Transition
       enter-active-class="transform ease-out duration-300 transition"
       enter-from-class="translate-y-2 opacity-0 sm:translate-y-0 sm:translate-x-2"
@@ -309,8 +352,8 @@ onMounted(() => {
         "
       >
         <div class="mr-3 flex-shrink-0">
-          <span v-if="alert.type === 'success'"></span>
-          <span v-else></span>
+          <span v-if="alert.type === 'success'">✓</span>
+          <span v-else>!</span>
         </div>
         <div>{{ alert.message }}</div>
       </div>
@@ -323,6 +366,7 @@ onMounted(() => {
           : 'ค้นหาเมนู หรือวัตถุดิบอาหาร'
       "
     />
+
     <div class="content-shell">
       <SideNav :items="navItems" />
       <main class="main-panel">
@@ -346,6 +390,7 @@ onMounted(() => {
         <section
           class="section-card overflow-hidden border border-stone-200/80 shadow-soft"
         >
+          <!-- Table Header -->
           <div
             class="hidden bg-stone-50 border-b border-stone-200/60 px-6 py-4 text-xs font-black uppercase tracking-wider text-stone-500 lg:grid lg:grid-cols-[80px_1.4fr_.8fr_.8fr_1fr_.7fr_.9fr] lg:gap-4 items-center select-none"
           >
@@ -402,7 +447,32 @@ onMounted(() => {
             }}</span>
           </div>
 
-          <div class="divide-y divide-stone-100">
+          <!-- Loading State -->
+          <div
+            v-if="isLoading"
+            class="p-12 text-center text-stone-400 font-bold"
+          >
+            {{
+              state.language === "en"
+                ? "Loading menu items..."
+                : "กำลังโหลดข้อมูลเมนู..."
+            }}
+          </div>
+
+          <!-- Empty State -->
+          <div
+            v-else-if="sortedMenuItems.length === 0"
+            class="p-12 text-center text-stone-400 font-bold"
+          >
+            {{
+              state.language === "en"
+                ? "No menu items found."
+                : "ไม่พบรายการเมนู"
+            }}
+          </div>
+
+          <!-- Menu Item Rows -->
+          <div v-else class="divide-y divide-stone-100">
             <article
               v-for="item in sortedMenuItems"
               :key="item.id"

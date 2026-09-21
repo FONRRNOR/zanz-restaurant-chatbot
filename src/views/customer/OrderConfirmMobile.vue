@@ -23,24 +23,42 @@ const isSubmitting = ref(false);
 const showDeleteModal = ref(false);
 const itemToDelete = ref(null);
 
-// State สำหรับเก็บโน้ตของแต่ละเมนู
 const itemNotes = ref({});
-
-// State สำหรับเปิด/ปิดช่องกรอกโน้ต (key เป็น item.id)
 const showNoteInput = ref({});
 
 const showSuccessModal = ref(false);
 const successOrderCode = ref("");
 
+// 🌟 สลับหน่วยเงินอัตโนมัติ บาท. / Baht. ตาม state.language 🌟
+const currencyUnit = computed(() => {
+  return state.language === "th" ? "บาท." : "Baht.";
+});
+
+// Helper: build unique key from ID and note to separate rows
+const getGroupKey = (item) => {
+  const noteStr = (item.notes || item.note || "").trim();
+  return `${item.id || item.menu_id}_${noteStr}`;
+};
+
+// Group cart items by unique ID and notes combination
 const groupedCartItems = computed(() => {
   if (!state.cart) return [];
   const groups = {};
 
   state.cart.forEach((item) => {
-    if (!groups[item.id]) {
-      groups[item.id] = { ...item, quantity: 0 };
+    const key = getGroupKey(item);
+    const itemQty = Number(item.quantity) || 1;
+    const itemNote = (item.notes || item.note || "").trim();
+
+    if (!groups[key]) {
+      groups[key] = {
+        ...item,
+        groupKey: key,
+        notes: itemNote,
+        quantity: 0,
+      };
     }
-    groups[item.id].quantity++;
+    groups[key].quantity += itemQty;
   });
 
   return Object.values(groups);
@@ -48,21 +66,21 @@ const groupedCartItems = computed(() => {
 
 const subtotal = computed(() => {
   if (!state.cart) return 0;
-  return state.cart.reduce(
-    (sum, item) => sum + (item.priceNum || parseFloat(item.price) || 0),
-    0,
-  );
+  return state.cart.reduce((sum, item) => {
+    const price = item.priceNum || parseFloat(item.price) || 0;
+    const qty = Number(item.quantity) || 1;
+    return sum + price * qty;
+  }, 0);
 });
+
 const serviceFee = computed(() => 0);
 const total = computed(() => subtotal.value + serviceFee.value);
 
-// ดึงข้อมูล Cart และ Note จาก sessionStorage ตอนเปิดหน้านี้ขึ้นมา
 onMounted(() => {
   const resId = route.query.restaurantId;
   const tabId = route.query.tableId;
 
   if (resId && tabId) {
-    // 💡 1. เพิ่มการดึง Cart กลับมา ป้องกันตะกร้าหายตอนรีเฟรชเว็บ
     const savedCart = sessionStorage.getItem(`cart_${resId}_${tabId}`);
     if (savedCart) {
       try {
@@ -72,16 +90,15 @@ onMounted(() => {
       }
     }
 
-    // 2. ดึงข้อมูล Note ตามเดิม
     const savedNotes = sessionStorage.getItem(`notes_${resId}_${tabId}`);
     if (savedNotes) {
       try {
         const parsedNotes = JSON.parse(savedNotes);
         itemNotes.value = parsedNotes;
 
-        Object.keys(parsedNotes).forEach((id) => {
-          if (parsedNotes[id] && parsedNotes[id].trim() !== "") {
-            showNoteInput.value[id] = true;
+        Object.keys(parsedNotes).forEach((key) => {
+          if (parsedNotes[key] && parsedNotes[key].trim() !== "") {
+            showNoteInput.value[key] = true;
           }
         });
       } catch (e) {
@@ -89,9 +106,18 @@ onMounted(() => {
       }
     }
   }
+
+  if (state.cart && state.cart.length > 0) {
+    state.cart.forEach((item) => {
+      const key = getGroupKey(item);
+      const noteStr = (item.notes || item.note || "").trim();
+      if (noteStr && !itemNotes.value[key]) {
+        itemNotes.value[key] = noteStr;
+      }
+    });
+  }
 });
 
-// Watch ตะกร้าสินค้า
 watch(
   () => state.cart,
   (newCart) => {
@@ -104,7 +130,6 @@ watch(
   { deep: true },
 );
 
-// Watch ข้อมูล Note ถ้ามีการพิมพ์เปลี่ยนให้เซฟลง sessionStorage อัตโนมัติ
 watch(
   itemNotes,
   (newNotes) => {
@@ -120,8 +145,8 @@ watch(
   { deep: true },
 );
 
-const toggleNoteInput = (id) => {
-  showNoteInput.value[id] = !showNoteInput.value[id];
+const toggleNoteInput = (key) => {
+  showNoteInput.value[key] = !showNoteInput.value[key];
 };
 
 const goBackToMenu = () => {
@@ -136,18 +161,38 @@ const goBackToMenu = () => {
 
 const adjustQuantity = (item, amount) => {
   if (!state.cart) state.cart = [];
+  const targetKey = item.groupKey || getGroupKey(item);
 
   if (amount > 0) {
-    state.cart.push(item);
+    state.cart.push({
+      ...item,
+      quantity: 1,
+      notes: itemNotes.value[targetKey] || item.notes || "",
+      note: itemNotes.value[targetKey] || item.notes || "",
+    });
   } else {
-    const currentQuantity = state.cart.filter((c) => c.id === item.id).length;
+    const matchingItems = state.cart.filter(
+      (c) => (c.groupKey || getGroupKey(c)) === targetKey,
+    );
+    const totalQty = matchingItems.reduce(
+      (sum, c) => sum + (Number(c.quantity) || 1),
+      0,
+    );
 
-    if (currentQuantity === 1) {
+    if (totalQty <= 1) {
       itemToDelete.value = item;
       showDeleteModal.value = true;
     } else {
-      const index = state.cart.findIndex((c) => c.id === item.id);
-      if (index !== -1) state.cart.splice(index, 1);
+      const index = state.cart.findIndex(
+        (c) => (c.groupKey || getGroupKey(c)) === targetKey,
+      );
+      if (index !== -1) {
+        if (state.cart[index].quantity && state.cart[index].quantity > 1) {
+          state.cart[index].quantity--;
+        } else {
+          state.cart.splice(index, 1);
+        }
+      }
     }
   }
 };
@@ -159,9 +204,13 @@ const promptRemoveItem = (item) => {
 
 const confirmDelete = () => {
   if (itemToDelete.value && state.cart) {
-    state.cart = state.cart.filter((c) => c.id !== itemToDelete.value.id);
-    delete itemNotes.value[itemToDelete.value.id];
-    delete showNoteInput.value[itemToDelete.value.id];
+    const targetKey =
+      itemToDelete.value.groupKey || getGroupKey(itemToDelete.value);
+    state.cart = state.cart.filter(
+      (c) => (c.groupKey || getGroupKey(c)) !== targetKey,
+    );
+    delete itemNotes.value[targetKey];
+    delete showNoteInput.value[targetKey];
   }
   showDeleteModal.value = false;
   setTimeout(() => {
@@ -176,6 +225,7 @@ const cancelDelete = () => {
   }, 300);
 };
 
+// Asynchronously insert order and line items into Supabase, then clear session storage
 const submitOrder = async () => {
   if (!state.cart || state.cart.length === 0) return;
 
@@ -185,6 +235,7 @@ const submitOrder = async () => {
     const restaurantId = route.query.restaurantId;
     const tableId = route.query.tableId;
 
+    // Asynchronously create the primary order record
     const { data: orderData, error: orderError } = await supabase
       .from("orders")
       .insert({
@@ -198,35 +249,36 @@ const submitOrder = async () => {
 
     if (orderError) throw orderError;
 
-    const orderItems = groupedCartItems.value.map((item) => ({
-      order_id: orderData.id,
-      menu_id: item.id,
-      menu_name: item.name,
-      quantity: item.quantity,
-      price_at_order: item.priceNum || parseFloat(item.price),
-      note:
-        itemNotes.value[item.id] && itemNotes.value[item.id].trim() !== ""
-          ? itemNotes.value[item.id]
-          : null,
-    }));
+    const orderItems = groupedCartItems.value.map((item) => {
+      const targetKey = item.groupKey || getGroupKey(item);
+      const finalNote = itemNotes.value[targetKey] || item.notes || "";
 
+      return {
+        order_id: orderData.id,
+        menu_id: item.id || item.menu_id,
+        menu_name: item.name,
+        menu_name_th: item.name_th || item.name_TH || item.nameTh || item.name,
+        quantity: item.quantity,
+        price_at_order: item.priceNum || parseFloat(item.price) || 0,
+        note: finalNote && finalNote.trim() !== "" ? finalNote.trim() : null,
+      };
+    });
+
+    // Asynchronously insert all associated order items
     const { error: itemsError } = await supabase
       .from("order_items")
       .insert(orderItems);
 
     if (itemsError) throw itemsError;
 
-    // เก็บ Order Code ไว้แสดง
     successOrderCode.value = orderData.order_code;
 
-    // เคลียร์ข้อมูลทั้งหมดเมื่อสั่งสำเร็จ
     state.cart = [];
     itemNotes.value = {};
     showNoteInput.value = {};
     sessionStorage.removeItem(`cart_${restaurantId}_${tableId}`);
     sessionStorage.removeItem(`notes_${restaurantId}_${tableId}`);
 
-    // เปิด Modal สำเร็จ
     showSuccessModal.value = true;
   } catch (error) {
     console.error("Error submitting order:", error);
@@ -244,11 +296,11 @@ const closeSuccessModal = () => {
 
 <template>
   <div
-    class="mobile-shell flex flex-col h-screen bg-stone-50 overflow-hidden relative"
+    class="mobile-shell flex flex-col h-[100dvh] bg-stone-50 overflow-hidden relative"
   >
-    <!-- Top Bar -->
+    <!-- Top Bar: pinned to top -->
     <header
-      class="bg-white px-4 pt-4 pb-3 flex items-center justify-center relative shadow-sm z-10"
+      class="flex-shrink-0 bg-white px-4 pt-4 pb-3 flex items-center justify-center relative shadow-sm z-30"
     >
       <button
         @click="goBackToMenu"
@@ -261,10 +313,10 @@ const closeSuccessModal = () => {
       </h1>
     </header>
 
-    <!-- ถ้าไม่มีของในตะกร้า -->
+    <!-- Empty Cart State -->
     <div
       v-if="!state.cart || state.cart.length === 0"
-      class="flex-1 flex flex-col items-center justify-center p-6 text-center"
+      class="flex-1 flex flex-col items-center justify-center p-6 text-center overflow-y-auto"
     >
       <Utensils :size="48" class="text-stone-300 mb-4" />
       <h2 class="text-xl font-bold text-stone-800 mb-2">
@@ -285,10 +337,9 @@ const closeSuccessModal = () => {
       </button>
     </div>
 
-    <!-- ถ้ามีของในตะกร้า -->
+    <!-- Filled Cart State -->
     <template v-else>
-      <main class="flex-1 overflow-y-auto px-4 py-6 pb-32">
-        <!-- Table Info -->
+      <main class="flex-1 overflow-y-auto px-4 py-6 pb-10">
         <div
           class="bg-white rounded-2xl p-4 mb-4 shadow-sm flex items-center justify-between border border-stone-100"
         >
@@ -312,7 +363,6 @@ const closeSuccessModal = () => {
           </div>
         </div>
 
-        <!-- Order Items List -->
         <div
           class="bg-white rounded-2xl p-5 mb-6 shadow-sm border border-stone-100"
         >
@@ -325,12 +375,10 @@ const closeSuccessModal = () => {
           <div class="space-y-6">
             <div
               v-for="item in groupedCartItems"
-              :key="item.id"
+              :key="item.groupKey"
               class="flex gap-4 items-start flex-col border-b border-dashed border-stone-200 pb-6 last:border-b-0 last:pb-0"
             >
-              <!-- แถวบน: รูป รายละเอียด และปุ่มต่างๆ -->
               <div class="flex gap-4 items-start w-full">
-                <!-- รูปภาพ -->
                 <div
                   class="w-20 h-20 rounded-xl bg-stone-100 flex-shrink-0 overflow-hidden"
                 >
@@ -347,7 +395,6 @@ const closeSuccessModal = () => {
                   </div>
                 </div>
 
-                <!-- รายละเอียด และ กลุ่มปุ่มจัดการ -->
                 <div
                   class="flex-1 flex flex-col min-w-0 h-full justify-between"
                 >
@@ -356,23 +403,43 @@ const closeSuccessModal = () => {
                       class="font-bold text-stone-900 text-sm leading-snug line-clamp-2"
                     >
                       {{
-                        state.language === "th" && item.name_th
-                          ? item.name_th
+                        state.language === "th" &&
+                        (item.name_th || item.name_TH || item.nameTh)
+                          ? item.name_th || item.name_TH || item.nameTh
                           : item.name
                       }}
                     </h4>
                     <p class="font-bold text-stone-500 text-sm mt-1">
                       {{
                         (
-                          item.priceNum || parseFloat(item.price)
+                          item.priceNum ||
+                          parseFloat(item.price) ||
+                          0
                         ).toLocaleString()
                       }}
-                      B.
+                      {{ currencyUnit }}
                     </p>
+
+                    <div
+                      v-if="itemNotes[item.groupKey] || item.notes"
+                      class="mt-1.5"
+                    >
+                      <span
+                        class="inline-flex items-center px-2 py-0.5 rounded-lg text-xs font-semibold"
+                        :class="
+                          (itemNotes[item.groupKey] || item.notes).includes(
+                            'กลับบ้าน',
+                          )
+                            ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                            : 'bg-amber-50 text-amber-700 border border-amber-200'
+                        "
+                      >
+                        Note: {{ itemNotes[item.groupKey] || item.notes }}
+                      </span>
+                    </div>
                   </div>
 
                   <div class="flex items-center justify-between mt-3">
-                    <!-- ปุ่ม - จำนวน + -->
                     <div
                       class="flex items-center gap-3 bg-stone-50 border border-stone-200 rounded-full px-1 py-1"
                     >
@@ -384,8 +451,9 @@ const closeSuccessModal = () => {
                       </button>
                       <span
                         class="w-4 text-center text-sm font-bold text-stone-900"
-                        >{{ item.quantity }}</span
                       >
+                        {{ item.quantity }}
+                      </span>
                       <button
                         @click="adjustQuantity(item, 1)"
                         class="touch-manipulation w-7 h-7 rounded-full flex items-center justify-center bg-stone-900 text-white hover:bg-stone-800 active:scale-95 transition-transform flex-shrink-0"
@@ -394,13 +462,12 @@ const closeSuccessModal = () => {
                       </button>
                     </div>
 
-                    <!-- กลุ่มปุ่มด้านขวา: โน้ต + ถังขยะ -->
                     <div class="flex items-center gap-2">
                       <button
-                        @click="toggleNoteInput(item.id)"
+                        @click="toggleNoteInput(item.groupKey)"
                         class="touch-manipulation p-2 rounded-full transition-colors"
                         :class="
-                          itemNotes[item.id]
+                          itemNotes[item.groupKey]
                             ? 'bg-amber-100 text-amber-600 hover:bg-amber-200'
                             : 'bg-stone-50 text-stone-400 hover:text-stone-600 hover:bg-stone-100'
                         "
@@ -418,19 +485,18 @@ const closeSuccessModal = () => {
                 </div>
               </div>
 
-              <!-- แถวล่าง: ช่องสำหรับกรอก Note -->
               <div
-                v-if="showNoteInput[item.id]"
+                v-if="showNoteInput[item.groupKey]"
                 class="w-full pl-[0px] mt-2 origin-top transition-all"
               >
                 <input
                   type="text"
-                  v-model="itemNotes[item.id]"
-                  @keyup.enter="toggleNoteInput(item.id)"
+                  v-model="itemNotes[item.groupKey]"
+                  @keyup.enter="toggleNoteInput(item.groupKey)"
                   :placeholder="
                     state.language === 'th'
-                      ? 'คำขอเพิ่มเติม (ถ้ามี)'
-                      : 'Special instructions (optional)'
+                      ? 'คำขอเพิ่มเติม (เช่น ทานที่ร้าน, กลับบ้าน, หวานน้อย)'
+                      : 'Special instructions'
                   "
                   class="w-full bg-stone-50 border border-stone-200 rounded-md px-3 py-1.5 text-xs text-stone-700 placeholder-stone-400 focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400 transition-all"
                 />
@@ -439,14 +505,13 @@ const closeSuccessModal = () => {
           </div>
         </div>
 
-        <!-- Summary & Total -->
         <div class="bg-white rounded-2xl p-5 shadow-sm border border-stone-100">
           <div class="space-y-3 mb-4 border-b border-stone-100 pb-4">
             <div
               class="flex justify-between text-sm text-stone-500 font-medium"
             >
               <span>{{ state.language === "th" ? "ยอดรวม" : "Subtotal" }}</span>
-              <span>{{ subtotal.toLocaleString() }} B.</span>
+              <span>{{ subtotal.toLocaleString() }} {{ currencyUnit }}</span>
             </div>
             <div
               class="flex justify-between text-sm text-stone-500 font-medium"
@@ -454,45 +519,42 @@ const closeSuccessModal = () => {
               <span>{{
                 state.language === "th" ? "ค่าบริการ" : "Service Fee"
               }}</span>
-              <span>{{ serviceFee.toLocaleString() }} B.</span>
+              <span>{{ serviceFee.toLocaleString() }} {{ currencyUnit }}</span>
             </div>
           </div>
           <div class="flex justify-between items-center">
-            <span class="font-black text-stone-900 text-lg">{{
-              state.language === "th" ? "รวมทั้งสิ้น" : "Total"
-            }}</span>
-            <span class="font-black text-2xl text-stone-900"
-              >{{ total.toLocaleString() }} B.</span
-            >
+            <span class="font-black text-stone-900 text-lg">
+              {{ state.language === "th" ? "รวมทั้งสิ้น" : "Total" }}
+            </span>
+            <span class="font-black text-2xl text-stone-900">
+              {{ total.toLocaleString() }} {{ currencyUnit }}
+            </span>
           </div>
         </div>
+
+        <!-- Submit order action button below total summary -->
+        <div class="mt-6">
+          <button
+            @click="submitOrder"
+            :disabled="isSubmitting"
+            class="touch-manipulation w-full bg-stone-900 text-white py-4 rounded-2xl font-black text-center active:scale-[0.99] transition-all shadow-lg flex justify-between items-center px-6 disabled:opacity-70"
+          >
+            <span>{{
+              isSubmitting
+                ? state.language === "th"
+                  ? "กำลังส่ง..."
+                  : "Submitting..."
+                : state.language === "th"
+                  ? "ยืนยันสั่งอาหาร"
+                  : "Place Order"
+            }}</span>
+            <span v-if="!isSubmitting"
+              >{{ total.toLocaleString() }} {{ currencyUnit }}</span
+            >
+          </button>
+        </div>
       </main>
-
-      <!-- Bottom Sticky Action -->
-      <div
-        class="fixed bottom-0 left-0 right-0 p-4 z-20 bg-gradient-to-t from-stone-50 via-stone-50 to-transparent pt-8"
-      >
-        <button
-          @click="submitOrder"
-          :disabled="isSubmitting"
-          class="touch-manipulation w-full bg-stone-900 text-white py-4 rounded-2xl font-black text-center active:scale-[0.99] transition-all shadow-lg flex justify-between items-center px-6 disabled:opacity-70"
-        >
-          <span>{{
-            isSubmitting
-              ? state.language === "th"
-                ? "กำลังส่ง..."
-                : "Submitting..."
-              : state.language === "th"
-                ? "ยืนยันสั่งอาหาร"
-                : "Place Order"
-          }}</span>
-          <span v-if="!isSubmitting">{{ total.toLocaleString() }} B.</span>
-        </button>
-      </div>
     </template>
-    <!-- จบ tag ของตะกร้าที่มีสินค้า -->
-
-    <!-- 💡 ย้าย Modals ลงมาตรงนี้ ให้ทำงานแยกเป็นอิสระจากตะกร้าสินค้า 💡 -->
 
     <!-- Delete Confirmation Modal -->
     <Transition name="fade">
@@ -569,19 +631,17 @@ const closeSuccessModal = () => {
                   : "The restaurant has received your order."
               }}
             </p>
-            <!-- แสดงรหัส Order -->
             <div
               class="bg-stone-50 rounded-lg py-3 px-4 mb-6 border border-stone-100"
             >
               <span
                 class="text-xs text-stone-400 block mb-1 uppercase font-bold"
-                >{{
-                  state.language === "th" ? "รหัสออเดอร์" : "Order Code"
-                }}</span
               >
-              <span class="text-lg font-black text-stone-800">{{
-                successOrderCode
-              }}</span>
+                {{ state.language === "th" ? "รหัสออเดอร์" : "Order Code" }}
+              </span>
+              <span class="text-lg font-black text-stone-800">
+                {{ successOrderCode }}
+              </span>
             </div>
             <button
               @click="closeSuccessModal"
@@ -605,7 +665,6 @@ const closeSuccessModal = () => {
 .fade-leave-to {
   opacity: 0;
 }
-
 .zoom-enter-active,
 .zoom-leave-active {
   transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);

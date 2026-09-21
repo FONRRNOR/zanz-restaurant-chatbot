@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onUnmounted } from "vue";
+import { ref, onMounted, onUnmounted, computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { supabase } from "../../supabaseClient";
 import { ArrowLeft } from "lucide-vue-next";
@@ -11,11 +11,40 @@ const router = useRouter();
 const orders = ref([]);
 const loading = ref(true);
 
-const tableId = route.params.orderId;
+// Resolve table ID with multiple fallbacks
+const tableId = computed(() => {
+  return (
+    route.params.orderId ||
+    route.params.tableId ||
+    route.query.tableId ||
+    sessionStorage.getItem("customer_table_id") ||
+    ""
+  );
+});
 
-// 🔴 1. เช็คจาก sessionStorage ทันทีตั้งแต่โหลด เพื่อป้องกันการกด Refresh แล้วหลุด
+// Resolve restaurant ID with multiple fallbacks
+const restaurantId = computed(() => {
+  return (
+    route.query.restaurantId ||
+    route.params.restaurantId ||
+    state.restaurantId ||
+    sessionStorage.getItem("customer_restaurant_id") ||
+    ""
+  );
+});
+
+// Cache identifiers in session storage to persist across page refreshes
+if (restaurantId.value) {
+  sessionStorage.setItem("customer_restaurant_id", restaurantId.value);
+}
+if (tableId.value) {
+  sessionStorage.setItem("customer_table_id", tableId.value);
+}
+
+// Check if this restaurant and table session is already marked expired
 const isSessionExpired = ref(
-  sessionStorage.getItem(`expired_${tableId}`) === "true"
+  sessionStorage.getItem(`expired_${restaurantId.value}_${tableId.value}`) ===
+    "true",
 );
 
 const t = {
@@ -27,15 +56,27 @@ const t = {
 };
 const text = (key) => t[key][state.language || "en"];
 
+// Asynchronously fetch active orders for the current table and restaurant
 const fetchOrders = async () => {
-  const { data, error } = await supabase
+  if (!tableId.value) {
+    loading.value = false;
+    return;
+  }
+
+  let query = supabase
     .from("orders")
     .select("*, order_items(*)")
-    .eq("table_number", tableId)
+    .eq("table_number", tableId.value)
     .neq("status", "paid")
     .order("created_at", { ascending: false });
 
-  if (data) {
+  if (restaurantId.value) {
+    query = query.eq("restaurant_id", restaurantId.value);
+  }
+
+  const { data, error } = await query;
+
+  if (!error && data) {
     orders.value = data;
   }
   loading.value = false;
@@ -45,23 +86,25 @@ let subscription;
 let tableSessionSubscription;
 let removeRouterGuard = null;
 
+// Lock user out when session expires and prevent navigation back
 const handleSessionExpiredState = () => {
   isSessionExpired.value = true;
-  
-  // 🔴 2. บันทึกสถานะลงใน sessionStorage เพื่อให้จำได้แม้จะกด Refresh
-  sessionStorage.setItem(`expired_${tableId}`, "true");
-  
-  sessionStorage.clear();
-  // เซ็ตค่าหมดอายุกลับไปใหม่หลัง clear เพื่อให้จำสถานะนี้ไว้
-  sessionStorage.setItem(`expired_${tableId}`, "true");
-  localStorage.removeItem("customer_session");
+
+  const resId = restaurantId.value;
+  const tabId = tableId.value;
+
+  if (resId && tabId) {
+    sessionStorage.setItem(`expired_${resId}_${tabId}`, "true");
+  }
+
+  // Clear cart cache but retain table ID for state validation on refresh
+  sessionStorage.removeItem(`cart_${resId}_${tabId}`);
 
   if (state) {
     state.cart = [];
-    state.tableId = null;
   }
 
-  // ป้องกันการกด Back หรือเปลี่ยนหน้าผ่าน Vue Router
+  // Intercept Vue Router navigation
   if (!removeRouterGuard) {
     removeRouterGuard = router.beforeEach((to, from, next) => {
       if (isSessionExpired.value) {
@@ -72,11 +115,20 @@ const handleSessionExpiredState = () => {
     });
   }
 
+  // Trap browser history back button
+  router.replace(route.fullPath);
   window.history.pushState(null, "", window.location.href);
+
+  window.onpopstate = function () {
+    window.history.pushState(null, "", window.location.href);
+  };
 };
 
+// Asynchronously verify table session status, fetch orders, and set up Realtime listeners
 onMounted(async () => {
-  // ถ้าจำจาก sessionStorage ได้ว่าเป็น expired แล้ว ให้ล็อกหน้าจอขอบคุณทันทีไม่ต้องรอโหลด
+  const currentTabId = tableId.value;
+  const currentResId = restaurantId.value;
+
   if (isSessionExpired.value) {
     handleSessionExpiredState();
     loading.value = false;
@@ -84,22 +136,34 @@ onMounted(async () => {
   }
 
   try {
-    const { data: sessionData } = await supabase
+    let sessionQuery = supabase
       .from("table_sessions")
       .select("status")
-      .eq("table_id", tableId)
-      .single();
+      .eq("table_id", currentTabId);
 
-    const { data: activeOrders } = await supabase
+    if (currentResId) {
+      sessionQuery = sessionQuery.eq("restaurant_id", currentResId);
+    }
+
+    const { data: sessionData } = await sessionQuery.maybeSingle();
+
+    let orderQuery = supabase
       .from("orders")
       .select("id")
-      .eq("table_number", tableId)
+      .eq("table_number", currentTabId)
       .neq("status", "paid")
       .neq("status", "cancelled");
 
+    if (currentResId) {
+      orderQuery = orderQuery.eq("restaurant_id", currentResId);
+    }
+
+    const { data: activeOrders } = await orderQuery;
+
+    // Lock session if table is cleared or empty with no active orders
     if (
       sessionData &&
-      sessionData.status === "available" &&
+      (sessionData.status === "available" || sessionData.status === "empty") &&
       (!activeOrders || activeOrders.length === 0)
     ) {
       handleSessionExpiredState();
@@ -112,18 +176,26 @@ onMounted(async () => {
 
   await fetchOrders();
 
-  // Realtime ดักฟังออเดอร์
+  // Subscribe to Realtime order status updates for this table
   subscription = supabase
-    .channel(`order-status-channel-${tableId}`)
+    .channel(`order-status-${currentResId}-${currentTabId}`)
     .on(
       "postgres_changes",
       {
         event: "UPDATE",
         schema: "public",
         table: "orders",
-        filter: `table_number=eq.${tableId}`,
+        filter: `table_number=eq.${currentTabId}`,
       },
       (payload) => {
+        if (
+          currentResId &&
+          payload.new.restaurant_id &&
+          payload.new.restaurant_id !== currentResId
+        ) {
+          return;
+        }
+
         const index = orders.value.findIndex((o) => o.id === payload.new.id);
         if (index !== -1) {
           orders.value[index].status = payload.new.status;
@@ -132,41 +204,50 @@ onMounted(async () => {
     )
     .subscribe();
 
-  // Realtime ดักฟังเมื่อแอดมินกดเคลียร์โต๊ะ
+  // Subscribe to table session updates and deletions to handle table clearance
   tableSessionSubscription = supabase
-    .channel(`table_session_sync_${tableId}`)
+    .channel(`session-status-${currentResId}-${currentTabId}`)
     .on(
       "postgres_changes",
       {
-        event: "UPDATE",
+        event: "*",
         schema: "public",
         table: "table_sessions",
-        filter: `table_id=eq.${tableId}`,
+        filter: `table_id=eq.${currentTabId}`,
       },
       (payload) => {
-        if (payload.new.status === "available") {
+        if (payload.eventType === "DELETE") {
           handleSessionExpiredState();
+          return;
+        }
+
+        if (payload.eventType === "UPDATE") {
+          if (
+            currentResId &&
+            payload.new.restaurant_id &&
+            payload.new.restaurant_id !== currentResId
+          ) {
+            return;
+          }
+
+          const newStatus = payload.new.status?.toLowerCase();
+          if (
+            newStatus === "available" ||
+            newStatus === "empty" ||
+            newStatus === "cleared"
+          ) {
+            handleSessionExpiredState();
+          }
         }
       },
     )
     .subscribe();
 });
 
-// ดักจับการกดปุ่ม Back ของเบราว์เซอร์
-onMounted(() => {
-  window.history.pushState(null, "", window.location.href);
-  window.addEventListener("popstate", () => {
-    if (isSessionExpired.value) {
-      window.history.pushState(null, "", window.location.href);
-    }
-  });
-});
-
 onUnmounted(() => {
   if (subscription) supabase.removeChannel(subscription);
   if (tableSessionSubscription)
     supabase.removeChannel(tableSessionSubscription);
-  
   if (removeRouterGuard) removeRouterGuard();
   window.onpopstate = null;
 });
@@ -208,14 +289,32 @@ const getStatusText = (status) => {
   }
   return status;
 };
+
+const handleBack = () => {
+  if (isSessionExpired.value) return;
+
+  if (restaurantId.value && tableId.value) {
+    router.push({
+      path: "/customer/menu/mobile",
+      query: {
+        restaurantId: restaurantId.value,
+        tableId: tableId.value,
+      },
+    });
+  } else {
+    router.back();
+  }
+};
 </script>
 
 <template>
-  <div class="mobile-shell bg-stone-50 min-h-screen p-4 flex flex-col">
-    <!-- หน้าจอแสดงผลเมื่อโต๊ะถูกเคลียร์ (Session Expired / Thank You) -->
+  <div
+    class="mobile-shell bg-stone-100 min-h-screen p-4 flex flex-col font-sans"
+  >
+    <!-- Session Expired Lock Screen -->
     <div
       v-if="isSessionExpired"
-      class="flex-1 flex flex-col items-center justify-center p-6 text-center bg-stone-50"
+      class="flex-1 flex flex-col items-center justify-center p-6 text-center bg-stone-50 rounded-3xl shadow-sm my-auto"
     >
       <div
         class="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mb-6 shadow-sm"
@@ -242,7 +341,7 @@ const getStatusText = (status) => {
             : "Thank you for dining with us"
         }}
       </h1>
-      <p class="text-stone-600 mb-6">
+      <p class="text-stone-600 mb-6 text-sm">
         {{
           state.language === "th"
             ? "บิลนี้ถูกชำระเงินและโต๊ะถูกเคลียร์เรียบร้อยแล้ว"
@@ -250,7 +349,7 @@ const getStatusText = (status) => {
         }}
       </p>
       <div class="bg-red-50 p-4 rounded-xl border border-red-100">
-        <p class="text-red-500 font-semibold text-sm">
+        <p class="text-red-500 font-semibold text-xs">
           {{
             state.language === "th"
               ? "หากต้องการสั่งอาหารเพิ่ม กรุณาสแกน QR Code ที่โต๊ะใหม่อีกครั้งครับ"
@@ -260,7 +359,7 @@ const getStatusText = (status) => {
       </div>
     </div>
 
-    <!-- โหลดดิ้ง -->
+    <!-- Loading State -->
     <div
       v-else-if="loading"
       class="text-center pt-20 text-stone-500 font-medium"
@@ -268,37 +367,53 @@ const getStatusText = (status) => {
       Loading...
     </div>
 
-    <!-- เนื้อหาปกติ -->
-    <div v-else class="max-w-md mx-auto w-full">
+    <!-- Receipt Style Order List -->
+    <div v-else class="max-w-md mx-auto w-full pb-10">
       <header class="flex items-center mb-6">
         <button
-          @click="router.back()"
-          class="p-2 bg-white rounded-full shadow-sm active:scale-95 transition-transform"
+          @click="handleBack"
+          class="p-2 bg-white rounded-full shadow-sm active:scale-95 transition-transform text-stone-700"
         >
-          <ArrowLeft />
+          <ArrowLeft class="w-5 h-5" />
         </button>
         <h1 class="ml-4 font-black text-lg text-stone-800">
           {{ text("header") }}
         </h1>
       </header>
 
-      <div v-for="order in orders" :key="order.id" class="mb-8">
+      <!-- Loop Through Receipts -->
+      <div
+        v-for="order in orders"
+        :key="order.id"
+        class="mb-8 filter drop-shadow-sm"
+      >
+        <!-- Receipt Container -->
         <div
-          class="bg-white rounded-3xl shadow-sm border border-stone-200 overflow-hidden transition-all hover:shadow-md"
+          class="bg-white rounded-t-2xl border border-stone-200 overflow-hidden relative"
         >
+          <!-- Receipt Header -->
           <div
-            class="p-6 text-center border-b border-stone-100 border-dashed relative"
+            class="p-6 text-center border-b-2 border-stone-200 border-dashed relative bg-stone-50/50"
           >
-            <p class="text-stone-400 text-xs font-bold uppercase mb-2">
+            <span
+              class="absolute -bottom-3 left-1/2 -translate-x-1/2 bg-stone-200 text-stone-600 text-[10px] px-3 py-0.5 rounded-full font-mono font-bold tracking-widest shadow-2xs"
+            >
+              RECEIPT
+            </span>
+            <p
+              class="text-stone-400 text-xs font-bold uppercase mb-1 tracking-wider"
+            >
               {{ text("orderCode") }}
             </p>
-            <h2 class="text-3xl font-black text-stone-900 mb-5">
+            <h2
+              class="text-3xl font-black text-stone-900 mb-4 font-mono tracking-tight"
+            >
               {{ order.order_code }}
             </h2>
 
             <div
               :class="[
-                'inline-block px-5 py-2 rounded-full font-black uppercase text-xs tracking-wider shadow-sm transition-colors',
+                'inline-block px-4 py-1.5 rounded-full font-black uppercase text-xs tracking-wider shadow-2xs transition-colors',
                 getStatusColor(order.status),
               ]"
             >
@@ -306,38 +421,53 @@ const getStatusText = (status) => {
             </div>
           </div>
 
+          <!-- Receipt Items List -->
           <div class="p-6">
-            <h3 class="font-bold text-stone-800 mb-4">{{ text("items") }}</h3>
+            <h3 class="font-bold text-stone-800 mb-3 text-sm tracking-wide">
+              {{ text("items") }}
+            </h3>
 
             <div class="space-y-3">
               <div
                 v-for="item in order.order_items"
                 :key="item.id"
-                class="flex justify-between py-2 border-b border-stone-50"
+                class="flex justify-between items-start py-1.5 border-b border-stone-100 text-sm"
               >
-                <span class="font-medium text-stone-700">
-                  <span class="text-stone-400 font-bold mr-1"
+                <span class="font-medium text-stone-700 pr-2">
+                  <span class="text-stone-400 font-bold mr-1.5 font-mono"
                     >{{ item.quantity }}x</span
                   >
                   {{ item.menu_name }}
                 </span>
-                <span class="font-semibold text-stone-600">
-                  {{ item.price_at_order.toLocaleString() }}
+                <span
+                  class="font-semibold text-stone-600 font-mono whitespace-nowrap"
+                >
+                  {{ item.price_at_order?.toLocaleString() }}
                   {{ state.language === "en" ? "B." : "บ." }}
                 </span>
               </div>
             </div>
 
+            <!-- Total Price -->
             <div
-              class="flex justify-between mt-6 pt-2 font-black text-lg text-stone-900"
+              class="flex justify-between items-center mt-6 pt-4 border-t border-stone-200 border-dashed text-stone-900"
             >
-              <span>{{ text("total") }}</span>
-              <span
-                >{{ order.total_price.toLocaleString() }}
-                {{ state.language === "en" ? "B." : "บ." }}</span
-              >
+              <span class="font-bold text-base">{{ text("total") }}</span>
+              <span class="font-black text-xl font-mono text-emerald-600">
+                {{ order.total_price?.toLocaleString() }}
+                {{ state.language === "en" ? "B." : "บ." }}
+              </span>
             </div>
           </div>
+        </div>
+
+        <!-- Receipt Bottom Jagged Edge -->
+        <div
+          class="h-3 w-full bg-white rounded-b-lg relative overflow-hidden shadow-sm"
+        >
+          <div
+            class="absolute inset-0 bg-[radial-gradient(circle,_transparent_50%,_#f5f5f4_50%)] bg-[length:12px_12px] rotate-180 translate-y-1"
+          ></div>
         </div>
       </div>
 

@@ -18,7 +18,7 @@ import {
 
 import { ref, computed } from "vue";
 import { useRouter, useRoute } from "vue-router";
-import { useAppState } from "../services/appState";
+import { useAppState } from "../../services/appState";
 
 defineProps({
   items: { type: Array, required: true },
@@ -37,13 +37,13 @@ const totalCartCount = computed(() => {
   return cart.reduce((total, item) => total + (item.quantity || 0), 0);
 });
 
-// กำหนดไอคอนให้ครอบคลุมชื่อกลุ่มที่เราจับคู่ใหม่ (Desserts กับ Drinks)
+// กำหนดไอคอนให้ครอบคลุมชื่อกลุ่ม
 const iconMap = {
   All: LayoutGrid,
   Starters: Utensils,
   "Main Courses": Soup,
   Drinks: Wine,
-  Desserts: Utensils, // เพิ่มไอคอนสำหรับหมวดหมู่ของหวานที่ยุบรวมมา
+  Desserts: Utensils,
   "Check Order Status": ClipboardList,
   "Live Orders": Monitor,
   "Menu Items": MenuSquare,
@@ -71,6 +71,8 @@ function handleNavClick(item, event) {
 
 function confirmLogout() {
   signOut();
+  // ล้างทั้ง sessionStorage และ localStorage เพื่อให้สอดคล้องกับ Router Guard
+  sessionStorage.removeItem("zank-active-user");
   localStorage.removeItem("zank-active-user");
   showLogoutModal.value = false;
   router.push("/");
@@ -117,7 +119,7 @@ function isCustomerItemActive(item) {
         <button
           v-if="item.label === 'Logout'"
           @click="showLogoutModal = true"
-          class="flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-semibold text-stone-700 transition-all duration-200 hover:bg-red-50 hover:text-red-600"
+          class="flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-semibold text-stone-700 transition-all duration-200 hover:bg-red-50 hover:text-red-600 cursor-pointer"
         >
           <component :is="iconMap[item.label] || Home" :size="20" />
           {{ state.language === "en" ? "Logout" : "ออกจากระบบ" }}
@@ -159,7 +161,7 @@ function isCustomerItemActive(item) {
           }}
         </RouterLink>
 
-        <!-- Condition check: When the loop encounters the 'Staff Accounts' menu and is on the owner URL, display the 'Table Management' menu immediately after -->
+        <!-- แสดง Table Management ต่อจาก Staff Accounts เมื่ออยู่ในโหมด Owner -->
         <RouterLink
           v-if="
             item.label === 'Staff Accounts' && route.path.startsWith('/owner/')
@@ -179,49 +181,6 @@ function isCustomerItemActive(item) {
               : "จัดการโต๊ะและ QR Code"
           }}
         </RouterLink>
-
-        <!-- Condition check: When the loop encounters the 'Staff Accounts' menu and is on the owner URL, display the 'Table Management' menu immediately after -->
-        <RouterLink
-          v-if="
-            item.label === 'Staff Accounts' && route.path.startsWith('/owner/')
-          "
-          to="/owner/tables"
-          class="flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold transition-all duration-200 hover:bg-softGreen/50"
-          :class="
-            route.path === '/owner/tables'
-              ? 'bg-softGreen text-stone-950 font-black shadow-xs ring-1 ring-brand/10'
-              : 'text-stone-600 bg-transparent'
-          "
-        >
-          <component :is="iconMap['Table Management']" :size="20" />
-          {{
-            state.language === "en"
-              ? "Table Management"
-              : "จัดการโต๊ะและ QR Code"
-          }}
-        </RouterLink>
-
-        <!-- Condition check: When the loop encounters the 'Staff Accounts' menu and is on the owner URL, display the 'Table Management' menu immediately after -->
-        <RouterLink
-          v-if="
-            item.label === 'Staff Accounts' && route.path.startsWith('/owner/')
-          "
-          to="/owner/tables"
-          class="flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold transition-all duration-200 hover:bg-softGreen/50"
-          :class="
-            route.path === '/owner/tables'
-              ? 'bg-softGreen text-stone-950 font-black shadow-xs ring-1 ring-brand/10'
-              : 'text-stone-600 bg-transparent'
-          "
-        >
-          <component :is="iconMap['Table Management']" :size="20" />
-          {{
-            state.language === "en"
-              ? "Table Management"
-              : "จัดการโต๊ะและ QR Code"
-          }}
-        </RouterLink>
-
       </template>
     </div>
 
@@ -241,38 +200,41 @@ function isCustomerItemActive(item) {
       </RouterLink>
     </div>
 
-    <div
-      v-if="showLogoutModal"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs"
-    >
+    <!-- ย้าย Modal ออกไปครอบที่ <body> ด้วย Teleport แก้ปัญหาถูก Sticky Header ฝั่งขวาทับ -->
+    <Teleport to="body">
       <div
-        class="w-full max-w-md rounded-3xl bg-white p-6 shadow-xl animate-in fade-in zoom-in-95 duration-150"
+        v-if="showLogoutModal"
+        class="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 transition-opacity"
       >
-        <h2 class="text-lg font-black text-red-600">
-          {{ state.language === "en" ? "Confirm Logout" : "ยืนยันออกจากระบบ" }}
-        </h2>
-        <p class="mt-3 text-sm text-stone-600 leading-relaxed">
-          {{
-            state.language === "en"
-              ? "Are you sure you want to log out? You will need to sign in again."
-              : "คุณต้องการออกจากระบบใช่หรือไม่? คุณจำเป็นต้องกรอกรหัสเข้าสู่ระบบใหม่อีกครั้งเพื่อใช้งาน"
-          }}
-        </p>
-        <div class="mt-6 flex justify-end gap-3">
-          <button
-            class="rounded-xl border border-stone-200 px-4 py-2 font-medium text-stone-600 hover:bg-stone-50"
-            @click="cancelLogout"
-          >
-            {{ state.language === "en" ? "Cancel" : "ยกเลิก" }}
-          </button>
-          <button
-            class="rounded-xl bg-red-600 px-4 py-2 font-semibold text-white shadow-md hover:bg-red-700 active:scale-95 transition-all"
-            @click="confirmLogout"
-          >
-            {{ state.language === "en" ? "Logout" : "ออกจากระบบ" }}
-          </button>
+        <div
+          class="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl animate-in fade-in zoom-in-95 duration-150 relative z-10"
+        >
+          <h2 class="text-lg font-black text-red-600">
+            {{ state.language === "en" ? "Confirm Logout" : "ยืนยันออกจากระบบ" }}
+          </h2>
+          <p class="mt-3 text-sm text-stone-600 leading-relaxed">
+            {{
+              state.language === "en"
+                ? "Are you sure you want to log out? You will need to sign in again."
+                : "คุณต้องการออกจากระบบใช่หรือไม่? คุณจำเป็นต้องกรอกรหัสเข้าสู่ระบบใหม่อีกครั้งเพื่อใช้งาน"
+            }}
+          </p>
+          <div class="mt-6 flex justify-end gap-3">
+            <button
+              class="rounded-xl border border-stone-200 px-4 py-2 font-medium text-stone-600 hover:bg-stone-50 cursor-pointer"
+              @click="cancelLogout"
+            >
+              {{ state.language === "en" ? "Cancel" : "ยกเลิก" }}
+            </button>
+            <button
+              class="rounded-xl bg-red-600 px-4 py-2 font-semibold text-white shadow-md hover:bg-red-700 active:scale-95 transition-all cursor-pointer"
+              @click="confirmLogout"
+            >
+              {{ state.language === "en" ? "Logout" : "ออกจากระบบ" }}
+            </button>
+          </div>
         </div>
       </div>
-    </div>
+    </Teleport>
   </aside>
 </template>

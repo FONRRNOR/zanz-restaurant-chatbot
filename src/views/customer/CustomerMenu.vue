@@ -2,12 +2,19 @@
 import { computed, ref, watch, onMounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { Info, ShoppingCart } from "@lucide/vue";
-import ChatPanel from "../../components/ChatPanel.vue";
-import MobileNav from "../../components/MobileNav.vue";
-import QuantityControl from "../../components/QuantityControl.vue";
-import SideNav from "../../components/SideNav.vue";
-import TagList from "../../components/TagList.vue";
-import TopBar from "../../components/TopBarCustomer.vue";
+
+// โฟลเดอร์ chat/
+import ChatPanel from "../../components/chat/ChatPanel.vue";
+
+// โฟลเดอร์ menu/
+import QuantityControl from "../../components/menu/QuantityControl.vue";
+
+// โฟลเดอร์ common/
+import MobileNav from "../../components/common/MobileNav.vue";
+import SideNav from "../../components/common/SideNav.vue";
+import TagList from "../../components/common/TagList.vue";
+import TopBar from "../../components/common/TopBarCustomer.vue";
+
 import { useAppState } from "../../services/appState";
 import { supabase } from "../../supabaseClient";
 
@@ -123,7 +130,9 @@ onMounted(() => {
   } else if (state.restaurantId) {
     fetchDatabaseMenuItems(state.restaurantId);
   } else {
-    alert("Store information not found. Please scan the QR code on your table again.");
+    alert(
+      "Store information not found. Please scan the QR code on your table again.",
+    );
     router.push("/");
   }
 });

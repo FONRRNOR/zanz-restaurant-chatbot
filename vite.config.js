@@ -6,6 +6,13 @@ import tailwindcss from '@tailwindcss/vite'
 export default defineConfig({
   plugins: [vue(), tailwindcss()],
   server: {
-    allowedHosts: true
+    allowedHosts: true, // ของเดิมของคุณ (สำคัญมากเวลาใช้ ngrok)
+    proxy: {
+      '/api': {
+        target: 'http://127.0.0.1:3000', // เปลี่ยนจาก localhost เป็น 127.0.0.1
+        changeOrigin: true,
+        secure: false,
+      }
+    }
   }
 })

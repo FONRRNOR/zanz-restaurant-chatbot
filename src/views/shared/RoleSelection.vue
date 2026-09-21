@@ -2,7 +2,7 @@
 import { ClipboardList, Lock, Monitor, Utensils } from "@lucide/vue";
 import { RouterLink } from "vue-router";
 import { computed, onMounted, onUnmounted } from "vue";
-import AppLogo from "../../components/AppLogo.vue";
+import AppLogo from "../../components/common/AppLogo.vue";
 import { useAppState } from "../../services/appState";
 
 const { state, toggleLanguage, t } = useAppState();

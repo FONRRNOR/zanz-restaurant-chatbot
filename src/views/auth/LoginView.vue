@@ -2,7 +2,7 @@
 import { Eye, EyeOff, Lock, Mail, ShieldCheck, Globe2 } from "@lucide/vue";
 import { computed, ref, watch, onMounted } from "vue";
 import { useRouter } from "vue-router";
-import AppLogo from "../../components/AppLogo.vue";
+import AppLogo from "../../components/common/AppLogo.vue";
 import { supabase } from "../../supabaseClient";
 import { useAppState } from "../../services/appState";
 import bcrypt from "bcryptjs";

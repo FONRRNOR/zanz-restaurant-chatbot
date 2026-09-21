@@ -1,6 +1,6 @@
 <script setup>
 import { ClipboardList, Home, MenuSquare, Monitor, Soup, Utensils, Wine, Users, LayoutDashboard } from '@lucide/vue'
-import { useAppState } from '../services/appState'
+import { useAppState } from '../../services/appState'
 
 defineProps({
   items: { type: Array, required: true },
