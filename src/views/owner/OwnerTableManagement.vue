@@ -1,104 +1,33 @@
 <script setup>
-import { ref, onMounted, computed } from "vue";
 import QrcodeVue from "qrcode.vue";
-
 import TopBar from "../../components/common/TopBar.vue";
 import SideNav from "../../components/common/SideNav.vue";
 
 import { useAppState } from "../../services/appState";
-import { supabase } from "../../supabaseClient";
+import { useOwnerTables } from "../../composables/owner/useOwnerTables";
 
 const { state } = useAppState();
 
-const restaurantId = ref("");
-const restaurantName = ref("");
-const tables = ref([]);
-const showModal = ref(false);
-const form = ref({
-  tableCount: 1,
-  seatsPerTable: 4,
-});
-
-// --- New QR Print System ---
-const showPrintModal = ref(false);
-const printForm = ref({
-  startTable: "",
-  endTable: "",
-  qrSizeCm: 8,
-});
-
-const tablesToPrint = computed(() => {
-  if (!printForm.value.startTable || !printForm.value.endTable) return [];
-  const startIdx = tables.value.findIndex(
-    (t) => t.number === printForm.value.startTable,
-  );
-  const endIdx = tables.value.findIndex(
-    (t) => t.number === printForm.value.endTable,
-  );
-
-  if (startIdx === -1 || endIdx === -1 || startIdx > endIdx) return [];
-  return tables.value.slice(startIdx, endIdx + 1);
-});
-
-function openPrintModal() {
-  if (tables.value.length > 0) {
-    printForm.value.startTable = tables.value[0].number;
-    printForm.value.endTable = tables.value[tables.value.length - 1].number;
-  }
-  showPrintModal.value = true;
-}
-
-function executePrint() {
-  showPrintModal.value = false;
-  setTimeout(() => {
-    window.print();
-  }, 300);
-}
-// ---------------------------------------------------
-
-// --- Delete Table System (Custom Modal) ---
-const showDeleteModal = ref(false);
-const tableToDeleteId = ref(null);
-const tableToDeleteNumber = ref("");
-const isDeleting = ref(false);
-
-function promptDeleteTable(id, number) {
-  tableToDeleteId.value = id;
-  tableToDeleteNumber.value = number;
-  showDeleteModal.value = true;
-}
-
-function cancelDeleteTable() {
-  showDeleteModal.value = false;
-  setTimeout(() => {
-    tableToDeleteId.value = null;
-    tableToDeleteNumber.value = "";
-  }, 200);
-}
-
-// Asynchronously delete table row from Supabase and update local state
-async function confirmDeleteTable() {
-  if (!tableToDeleteId.value) return;
-  isDeleting.value = true;
-
-  try {
-    const { error } = await supabase
-      .from("tables")
-      .delete()
-      .eq("id", tableToDeleteId.value);
-    if (error) throw error;
-    tables.value = tables.value.filter((t) => t.id !== tableToDeleteId.value);
-
-    showDeleteModal.value = false;
-  } catch (error) {
-    alert("Error deleting table: " + error.message);
-  } finally {
-    isDeleting.value = false;
-    tableToDeleteId.value = null;
-    tableToDeleteNumber.value = "";
-  }
-}
-// ---------------------------------------------------
+const {
+  restaurantName,
+  tables,
+  showModal,
+  form,
+  showPrintModal,
+  printForm,
+  showDeleteModal,
+  tableToDeleteNumber,
+  isDeleting,
+  tablesToPrint,
+  generateTables,
+  promptDeleteTable,
+  cancelDeleteTable,
+  confirmDeleteTable,
+  generateTableUrl,
+  openPrintModal,
+  executePrint,
+  getSeatColorClass,
+} = useOwnerTables(state);
 
 const ownerNav = [
   { label: "Dashboard", to: "/owner/dashboard", short: "Home" },
@@ -107,91 +36,6 @@ const ownerNav = [
   { label: "Staff Accounts", to: "/owner/staff-accounts", short: "Staff" },
   { label: "Logout", to: "/logout", short: "Logout" },
 ];
-
-onMounted(async () => {
-  const savedUserJson = sessionStorage.getItem("zank-active-user");
-  if (savedUserJson) {
-    const localUser = JSON.parse(savedUserJson);
-    restaurantId.value = localUser.restaurant_id;
-    restaurantName.value = localUser.restaurant_name || "ZANK Restaurant";
-    await fetchTables();
-  }
-});
-
-// Asynchronously fetch table list from database ordered by table number
-async function fetchTables() {
-  if (!restaurantId.value) return;
-  try {
-    const { data, error } = await supabase
-      .from("tables")
-      .select("*")
-      .eq("restaurant_id", restaurantId.value)
-      .order("table_number", { ascending: true });
-
-    if (error) throw error;
-    if (data) {
-      tables.value = data.map((t) => ({
-        id: t.id,
-        number: t.table_number,
-        seats: t.seats,
-      }));
-    }
-  } catch (error) {
-    console.error("Error fetching tables:", error.message);
-  }
-}
-
-function generateTableUrl(tableNumber) {
-  const baseUrl = import.meta.env.VITE_PUBLIC_APP_URL || window.location.origin;
-  if (!restaurantId.value) return "";
-  return `${baseUrl}/customer/menu/mobile?restaurantId=${restaurantId.value}&tableId=${tableNumber}`;
-}
-
-// Asynchronously create multiple table rows continuing sequence and sync state
-async function generateTables() {
-  if (form.value.tableCount < 1 || form.value.seatsPerTable < 1) return;
-  if (!restaurantId.value) {
-    alert("Error: No active restaurant ID found.");
-    return;
-  }
-
-  try {
-    let startNumber = 1;
-    if (tables.value.length > 0) {
-      const maxNum = Math.max(
-        ...tables.value.map((t) => parseInt(t.number) || 0),
-      );
-      startNumber = maxNum + 1;
-    }
-
-    const newTablesPayload = [];
-    for (let i = 0; i < form.value.tableCount; i++) {
-      const tableNum = String(startNumber + i).padStart(2, "0");
-      newTablesPayload.push({
-        restaurant_id: restaurantId.value,
-        table_number: tableNum,
-        seats: form.value.seatsPerTable,
-      });
-    }
-
-    const { error } = await supabase.from("tables").insert(newTablesPayload);
-    if (error) throw error;
-
-    showModal.value = false;
-    form.value.tableCount = 1;
-    await fetchTables();
-  } catch (error) {
-    alert("Error generating tables: " + error.message);
-  }
-}
-
-function getSeatColorClass(seats) {
-  const s = parseInt(seats) || 0;
-  if (s <= 2) return "bg-red-100 text-red-600";
-  if (s <= 4) return "bg-orange-100 text-orange-600";
-  if (s <= 8) return "bg-yellow-100 text-yellow-700";
-  return "bg-stone-100 text-stone-600";
-}
 </script>
 
 <template>
@@ -655,13 +499,12 @@ function getSeatColorClass(seats) {
               <div>
                 <label
                   class="block text-sm font-bold text-stone-700 mb-2 md:mb-3 text-center"
-                >
-                  {{
+                  >{{
                     state.language === "en"
                       ? "How many tables to add?"
                       : "ต้องการเพิ่มกี่โต๊ะ?"
-                  }}
-                </label>
+                  }}</label
+                >
                 <div
                   class="flex items-center w-full rounded-2xl border border-stone-200 bg-white overflow-hidden focus-within:border-emerald-500 focus-within:ring-2 focus-within:ring-emerald-500/20 transition-all shadow-sm"
                 >
@@ -724,13 +567,12 @@ function getSeatColorClass(seats) {
               <div>
                 <label
                   class="block text-sm font-bold text-stone-700 mb-2 md:mb-3 text-center"
-                >
-                  {{
+                  >{{
                     state.language === "en"
                       ? "Seats per table?"
                       : "จำนวนที่นั่งต่อโต๊ะ"
-                  }}
-                </label>
+                  }}</label
+                >
                 <div
                   class="flex items-center w-full rounded-2xl border border-stone-200 bg-white overflow-hidden focus-within:border-emerald-500 focus-within:ring-2 focus-within:ring-emerald-500/20 transition-all shadow-sm"
                 >
@@ -805,7 +647,7 @@ function getSeatColorClass(seats) {
                   stroke-linejoin="round"
                   stroke-width="2"
                   d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                ></path>
+                />
               </svg>
               <span>{{
                 state.language === "en"

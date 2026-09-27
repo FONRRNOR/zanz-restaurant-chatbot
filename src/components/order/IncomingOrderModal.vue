@@ -1,5 +1,5 @@
 <script setup>
-import { useIncomingOrderModal } from "../../composables/useIncomingOrderModal";
+import { useIncomingOrderModal } from "../../composables/shared/useIncomingOrderModal";
 
 // Destructure state and actions from the incoming order composable
 const {

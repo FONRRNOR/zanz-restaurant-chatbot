@@ -8,6 +8,11 @@ import TagList from "../../components/common/TagList.vue";
 import TopBar from "../../components/common/TopBar.vue";
 import { useAppState } from "../../services/appState";
 import { supabase } from "../../supabaseClient";
+import IncomingOrderModal from "../../components/order/IncomingOrderModal.vue";
+import { useStaffRealtime } from "../../composables/staff/useStaffRealtime.js";
+
+// 🌟 เรียกใช้ Realtime กลางได้ทันที โค้ดไม่รกแล้ว
+useStaffRealtime();
 
 const router = useRouter();
 const { state, signOut } = useAppState();
@@ -16,15 +21,13 @@ const menuItems = ref([]);
 const isLoading = ref(false);
 const sortBy = ref("category");
 const sortOrder = ref("asc");
-
-// State to store the selected menu item data when clicked for details
 const selectedItem = ref(null);
 
 // State for toast notifications
 const alert = ref({
   show: false,
   message: "",
-  type: "success", // 'success' | 'error'
+  type: "success",
 });
 
 const navItems = computed(() => [
@@ -45,7 +48,6 @@ const navItems = computed(() => [
   },
 ]);
 
-// Trigger custom notification toast
 function triggerAlert(message, type = "success") {
   alert.value = { show: true, message, type };
   setTimeout(() => {
@@ -53,7 +55,7 @@ function triggerAlert(message, type = "success") {
   }, 3000);
 }
 
-// Asynchronously fetch menu items from Supabase filtered by the staff user's restaurant ID
+// Fetch menu items
 async function fetchMenuItems() {
   isLoading.value = true;
   try {
@@ -113,31 +115,21 @@ const sortedMenuItems = computed(() => {
     let modifier = sortOrder.value === "asc" ? 1 : -1;
 
     if (sortBy.value === "category") {
-      const orderConfig = {
-        Starters: 1,
-        "Main Courses": 2,
-        Drink: 3,
-      };
-
+      const orderConfig = { Starters: 1, "Main Courses": 2, Drink: 3 };
       let weightA = orderConfig[a.category] || 99;
       let weightB = orderConfig[b.category] || 99;
-
       if (weightA === weightB) {
         return (Number(a.id) - Number(b.id)) * modifier;
       }
-
       return (weightA - weightB) * modifier;
     }
 
-    let fieldA = a[sortBy.value];
-    let fieldB = b[sortBy.value];
+    let fieldA = (a[sortBy.value] || "").toString().toLowerCase();
+    let fieldB = (b[sortBy.value] || "").toString().toLowerCase();
 
     if (sortBy.value === "price") {
-      return (Number(fieldA) - Number(fieldB)) * modifier;
+      return (Number(a.price) - Number(b.price)) * modifier;
     }
-
-    fieldA = (fieldA || "").toString().toLowerCase();
-    fieldB = (fieldB || "").toString().toLowerCase();
 
     if (fieldA < fieldB) return -1 * modifier;
     if (fieldA > fieldB) return 1 * modifier;
@@ -154,19 +146,14 @@ function handleSort(field) {
   }
 }
 
-// Asynchronously toggle item availability between available and sold_out with rollback on error
 async function toggleAvailability(itemId, currentStatus) {
   const nextStatus = currentStatus === "available" ? "sold_out" : "available";
-
   const itemIndex = menuItems.value.findIndex((x) => x.id === itemId);
   if (itemIndex === -1) return;
   const originalStatus = menuItems.value[itemIndex].availability;
 
   try {
-    // 1. Optimistic UI update
     menuItems.value[itemIndex].availability = nextStatus;
-
-    // 2. Asynchronously persist update in Supabase
     const { error } = await supabase
       .from("menu_items")
       .update({ availability: nextStatus })
@@ -174,37 +161,27 @@ async function toggleAvailability(itemId, currentStatus) {
 
     if (error) throw error;
 
-    // 3. Show notification
     const itemName =
       state.language === "en"
         ? menuItems.value[itemIndex].name
         : menuItems.value[itemIndex].name_th || menuItems.value[itemIndex].name;
 
-    const successMsg =
+    triggerAlert(
       state.language === "en"
         ? `Updated "${itemName}" status successfully.`
-        : `อัปเดตสถานะเมนู "${itemName}" สำเร็จแล้ว`;
-
-    triggerAlert(successMsg, "success");
+        : `อัปเดตสถานะเมนู "${itemName}" สำเร็จแล้ว`,
+      "success",
+    );
   } catch (error) {
-    // Roll back status if update fails
-    if (menuItems.value[itemIndex]) {
-      menuItems.value[itemIndex].availability = originalStatus;
-    }
+    menuItems.value[itemIndex].availability = originalStatus;
     console.error("Error updating availability:", error.message);
-
-    const errorMsg =
+    triggerAlert(
       state.language === "en"
         ? "Failed to update status. Please try again."
-        : "เกิดข้อผิดพลาด ไม่สามารถเปลี่ยนสถานะได้ กรุณาลองใหม่";
-
-    triggerAlert(errorMsg, "error");
+        : "เกิดข้อผิดพลาด ไม่สามารถเปลี่ยนสถานะได้ กรุณาลองใหม่",
+      "error",
+    );
   }
-}
-
-function logout() {
-  signOut();
-  router.push("/");
 }
 
 onMounted(() => {
@@ -594,5 +571,8 @@ onMounted(() => {
       </main>
     </div>
     <MobileNav :items="navItems" />
+
+    <!-- Modal แจ้งเตือนออร์เดอร์เข้า -->
+    <IncomingOrderModal />
   </div>
 </template>

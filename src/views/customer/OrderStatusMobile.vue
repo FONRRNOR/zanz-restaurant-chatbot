@@ -443,7 +443,7 @@ const handleBack = () => {
                   class="font-semibold text-stone-600 font-mono whitespace-nowrap"
                 >
                   {{ item.price_at_order?.toLocaleString() }}
-                  {{ state.language === "en" ? "B." : "บ." }}
+                  {{ state.language === "en" ? "Baht." : "บาท." }}
                 </span>
               </div>
             </div>
@@ -455,7 +455,7 @@ const handleBack = () => {
               <span class="font-bold text-base">{{ text("total") }}</span>
               <span class="font-black text-xl font-mono text-emerald-600">
                 {{ order.total_price?.toLocaleString() }}
-                {{ state.language === "en" ? "B." : "บ." }}
+                {{ state.language === "en" ? "Baht." : "บาท." }}
               </span>
             </div>
           </div>

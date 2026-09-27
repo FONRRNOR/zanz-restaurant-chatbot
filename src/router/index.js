@@ -3,11 +3,7 @@ import RoleSelection from "../views/shared/RoleSelection.vue";
 import LogoutView from "../views/shared/LogoutView.vue";
 import LoginView from "../views/auth/LoginView.vue";
 import ForgotPassword from "../views/auth/ForgotPassword.vue";
-import CustomerMenu from "../views/customer/CustomerMenu.vue";
 import CustomerMenuViewMobile from "../views/customer/CustomerMenuViewMobile.vue";
-import CartView from "../views/customer/CartView.vue";
-import OrderConfirmation from "../views/customer/OrderConfirmation.vue";
-import OrderStatus from "../views/customer/OrderStatus.vue";
 import StaffLiveOrders from "../views/staff/StaffLiveOrders.vue";
 import StaffMenuItems from "../views/staff/StaffMenuItems.vue";
 import OwnerDashboard from "../views/owner/OwnerDashboard.vue";
@@ -25,14 +21,7 @@ const routes = [
   { path: "/forgot-password", component: ForgotPassword },
   { path: "/staff/login", component: LoginView, props: { type: "staff" } },
   { path: "/owner/login", component: LoginView, props: { type: "owner" } },
-  { path: "/customer/menu", component: CustomerMenu },
   { path: "/customer/menu/mobile", component: CustomerMenuViewMobile },
-  { path: "/customer/cart", component: CartView },
-  {
-    path: "/customer/order-confirmation/:orderNumber",
-    component: OrderConfirmation,
-  },
-  { path: "/customer/order-status", component: OrderStatus },
   {
     path: "/customer/order-status/mobile/:orderId",
     component: OrderStatusMobile,
@@ -93,18 +82,14 @@ router.beforeEach((to) => {
     "/owner/login",
     "/staff/login",
     "/forgot-password",
-    "/customer/menu",
     "/customer/menu/mobile",
-    "/customer/cart",
-    "/customer/order-status",
     "/order",
   ];
 
   const isPublicDynamicPage =
-    to.path.startsWith("/customer/order-confirmation/") ||
     to.path.startsWith("/customer/order-status/mobile/");
 
-  // 1. 🌟 เปลี่ยนมาดึงข้อมูลจาก sessionStorage แทน
+  // 1. ดึงข้อมูลจาก sessionStorage
   const savedUserString = sessionStorage.getItem("zank-active-user");
   if (!state.activeUser && savedUserString) {
     try {

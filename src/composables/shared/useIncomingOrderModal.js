@@ -1,41 +1,30 @@
 import { ref } from "vue";
-
-import { supabase } from "../supabaseClient";
+import { useRouter } from "vue-router"; // 🌟 เพิ่ม router
+import { supabase } from "../../supabaseClient";
 
 const isModalVisible = ref(false);
-
 const currentOrder = ref(null);
-
 const remainingSeconds = ref(60);
-
-// SRS-182: Stores notification service error state
 const notificationError = ref(false);
 
 let timerInterval = null;
-
 const alertSound = new Audio("/sounds/alert.mp3");
-
 alertSound.volume = 1.0;
 
 export function useIncomingOrderModal() {
-  // Unlock audio playback restrictions on touch devices such as iPad
+  const router = useRouter(); // 🌟 เรียกใช้ router
+
   const unlockAudio = () => {
-    alertSound
-      .play()
-      .then(() => {
-        alertSound.pause();
-        alertSound.currentTime = 0;
-      })
-      .catch((err) => console.warn("Unlock audio blocked:", err));
+    alertSound.play().then(() => {
+      alertSound.pause();
+      alertSound.currentTime = 0;
+    }).catch((err) => console.warn("Unlock audio blocked:", err));
   };
 
   const playSingleChime = () => {
     try {
       alertSound.currentTime = 0;
-
-      alertSound
-        .play()
-        .catch((err) => console.warn("Audio play blocked:", err));
+      alertSound.play().catch((err) => console.warn("Audio play blocked:", err));
     } catch (err) {
       console.warn("Audio error:", err);
     }
@@ -44,19 +33,12 @@ export function useIncomingOrderModal() {
   const playDoubleChime = () => {
     try {
       alertSound.currentTime = 0;
-
-      alertSound
-        .play()
-        .then(() => {
-          setTimeout(() => {
-            alertSound.currentTime = 0;
-
-            alertSound
-              .play()
-              .catch((err) => console.warn("Double play blocked:", err));
-          }, 200);
-        })
-        .catch((err) => console.warn("Audio play blocked:", err));
+      alertSound.play().then(() => {
+        setTimeout(() => {
+          alertSound.currentTime = 0;
+          alertSound.play().catch((err) => console.warn("Double play blocked:", err));
+        }, 200);
+      }).catch((err) => console.warn("Audio play blocked:", err));
     } catch (err) {
       console.warn("Audio error:", err);
     }
@@ -64,16 +46,13 @@ export function useIncomingOrderModal() {
 
   const startCountdown = (initialSeconds = 60) => {
     clearInterval(timerInterval);
-
     remainingSeconds.value = initialSeconds;
-
     playSingleChime();
 
     timerInterval = setInterval(() => {
       if (remainingSeconds.value > 0) {
         remainingSeconds.value--;
       }
-
       if (remainingSeconds.value === 0) {
         playDoubleChime();
       } else {
@@ -82,72 +61,52 @@ export function useIncomingOrderModal() {
     }, 1000);
   };
 
-  // SRS-178 / SRS-181:
-  // Display a new order notification using a real-time modal interface.
   const showNewOrderModal = (orderData, timeLimitSec = 60) => {
+    // 🌟 เช็คว่าถ้า Staff ยังไม่ล็อกอิน (ไม่มี activeUser) จะไม่แสดง Modal และไม่แจ้งเตือนใดๆ
+    const savedUserString = sessionStorage.getItem("zank-active-user");
+    if (!savedUserString) return;
+
     try {
-      // Validate incoming order data before displaying notification.
       if (!orderData) {
         throw new Error("Invalid order notification data.");
       }
 
-      // Clear previous notification error.
       notificationError.value = false;
-
       currentOrder.value = orderData;
-
       isModalVisible.value = true;
-
       startCountdown(timeLimitSec);
     } catch (error) {
       console.error("New Order Notification Error:", error);
-
-      // SRS-182:
-      // Mark the notification service as unavailable.
       notificationError.value = true;
-
       isModalVisible.value = false;
-
       currentOrder.value = null;
-
       clearInterval(timerInterval);
-
       alertSound.pause();
       alertSound.currentTime = 0;
     }
   };
 
-  // SRS-182:
-  // Handle notification service failure.
   const handleNotificationError = (error) => {
     console.error("Notification Service Error:", error);
-
     notificationError.value = true;
-
     isModalVisible.value = false;
-
     currentOrder.value = null;
-
     clearInterval(timerInterval);
-
     alertSound.pause();
     alertSound.currentTime = 0;
   };
 
-  // Clear the notification error state.
   const clearNotificationError = () => {
     notificationError.value = false;
   };
 
-  // Asynchronously approve the order and update status to preparing in Supabase
+  // 🌟 เมื่อกด Approve จะอัปเดตสถานะและพาไปหน้า /staff/live-orders ทันที
   const handleApproveOrder = async () => {
     clearInterval(timerInterval);
-
     alertSound.pause();
     alertSound.currentTime = 0;
 
     const orderRawId = currentOrder.value?.raw_id;
-
     isModalVisible.value = false;
 
     if (orderRawId) {
@@ -163,16 +122,16 @@ export function useIncomingOrderModal() {
         console.error("Approve Order Error:", error);
       }
     }
+
+    // สั่งเปลี่ยนหน้าไปที่ Live Orders ของ Staff ทันที
+    router.push("/staff/live-orders");
   };
 
   const handleRejectOrder = () => {
     clearInterval(timerInterval);
-
     alertSound.pause();
     alertSound.currentTime = 0;
-
     isModalVisible.value = false;
-
     currentOrder.value = null;
   };
 
@@ -180,12 +139,9 @@ export function useIncomingOrderModal() {
     isModalVisible,
     currentOrder,
     remainingSeconds,
-
-    // SRS-182
     notificationError,
     handleNotificationError,
     clearNotificationError,
-
     showNewOrderModal,
     handleApproveOrder,
     handleRejectOrder,

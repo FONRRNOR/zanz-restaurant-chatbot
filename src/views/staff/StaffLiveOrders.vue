@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch } from "vue";
+import { onMounted, onUnmounted, watch, computed } from "vue";
 import { useRouter } from "vue-router";
 import MobileNav from "../../components/common/MobileNav.vue";
 import SideNav from "../../components/common/SideNav.vue";
@@ -7,188 +7,26 @@ import StatusPill from "../../components/common/StatusPill.vue";
 import TopBar from "../../components/common/TopBar.vue";
 import IncomingOrderModal from "../../components/order/IncomingOrderModal.vue";
 import { useAppState } from "../../services/appState";
-import { supabase } from "../../supabaseClient";
-import { useIncomingOrderModal } from "../../composables/useIncomingOrderModal";
+import { useIncomingOrderModal } from "../../composables/shared/useIncomingOrderModal.js";
+import { useStaffOrders } from "../../composables/staff/useStaffOrders.js";
 
 const router = useRouter();
 const { state, signOut } = useAppState();
 
-// Destructure incoming order modal handler and audio unlock from composable
 const { showNewOrderModal, unlockAudio } = useIncomingOrderModal();
+const {
+  activeFilter,
+  restaurantId,
+  filteredOrders,
+  fetchOrders,
+  updateOrderStatus,
+  setupRealtimeSubscription,
+  cleanupRealtime,
+} = useStaffOrders(state, showNewOrderModal);
 
-const orders = ref([]);
-const activeFilter = ref("all");
-const restaurantId = ref("");
-
-// Asynchronously fetch active orders with line items and format for display
-async function fetchOrders() {
-  if (!restaurantId.value) return;
-
-  const { data, error } = await supabase
-    .from("orders")
-    .select("*, order_items (*)")
-    .eq("restaurant_id", restaurantId.value)
-    .order("created_at", { ascending: true });
-
-  if (error) {
-    console.error("Supabase Error:", error);
-    return;
-  }
-
-  const allergyKeywords = [
-    "no onion",
-    "no peanuts",
-    "no shrimp",
-    "no dairy",
-    "no egg",
-    "allergic",
-    "แพ้",
-  ];
-
-  orders.value = data.map((order) => ({
-    id: order.id,
-    orderNumber: order.order_code || `A-${100 + order.id}`,
-    tableNumber: order.table_number?.replace("T-", "") || "?",
-    time: new Date(order.created_at).toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-    }),
-    status: order.status === "pending" ? "new" : order.status,
-    items: (order.order_items || []).map((item, index) => {
-      const noteText = (item.note || "").toLowerCase();
-      const isAllergy = allergyKeywords.some((keyword) =>
-        noteText.includes(keyword),
-      );
-
-      let displayName = item.menu_name;
-      if (state.language === "th") {
-        displayName = item.menu_name_th || item.name_th || item.menu_name;
-      } else {
-        displayName = item.menu_name || item.name;
-      }
-
-      return {
-        id: `${order.id}-${item.id}-${index}`,
-        name: displayName,
-        quantity: item.quantity,
-        note: item.note,
-        isAllergy: isAllergy,
-      };
-    }),
-    customerNote: order.customer_note,
-    allergies: order.allergies || [],
-    type: order.type || "dine_in",
-  }));
-}
-
-// Asynchronously fetch details for an incoming order and trigger the countdown alert modal
-async function triggerNewOrderAlert(orderId) {
-  const { data, error } = await supabase
-    .from("orders")
-    .select("*, order_items (*)")
-    .eq("id", orderId)
-    .single();
-
-  if (error || !data) return;
-
-  const modalData = {
-    raw_id: data.id,
-    order_id: data.order_code || `A-${100 + data.id}`,
-    customer_name: data.customer_name || "Dine-in Customer",
-    table_number: data.table_number?.replace("T-", "") || "?",
-    order_time: new Date(data.created_at).toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-    }),
-    items: (data.order_items || []).map((item) => {
-      let displayName = item.menu_name;
-      if (state.language === "th") {
-        displayName = item.menu_name_th || item.name_th || item.menu_name;
-      }
-      return {
-        name: displayName,
-        quantity: item.quantity,
-        note: item.note || "-",
-      };
-    }),
-  };
-
-  showNewOrderModal(modalData, 60);
-}
-
-const filteredOrders = computed(() => {
-  let result = orders.value;
-
-  if (activeFilter.value === "dine_in") {
-    result = result.filter((o) => o.type === "dine_in");
-  } else if (activeFilter.value === "allergies") {
-    result = result.filter((o) => o.allergies && o.allergies.length > 0);
-  }
-
-  return result;
-});
-
-// Asynchronously update order status in Supabase and refresh local order state
-async function updateOrderStatus(orderId, nextStatus) {
-  const now = new Date().toISOString();
-
-  const orderIndex = orders.value.findIndex((o) => o.id === orderId);
-  if (orderIndex !== -1) {
-    orders.value[orderIndex].status =
-      nextStatus === "pending" ? "new" : nextStatus;
-  }
-
-  const { error } = await supabase
-    .from("orders")
-    .update({
-      status: nextStatus,
-      updated_at: now,
-    })
-    .eq("id", orderId);
-
-  if (error) {
-    console.error("Update Status Error:", error);
-    alert("Update failed: " + error.message);
-    await fetchOrders();
-  } else {
-    await fetchOrders();
-  }
-}
-
-let channel = null;
-
-function setupRealtimeSubscription(resId) {
-  if (!resId) return;
-
-  if (channel) {
-    supabase.removeChannel(channel);
-  }
-
-  channel = supabase
-    .channel(`staff-orders-${resId}`)
-    .on(
-      "postgres_changes",
-      {
-        event: "*",
-        schema: "public",
-        table: "orders",
-        filter: `restaurant_id=eq.${resId}`,
-      },
-      (payload) => {
-        if (payload.eventType === "INSERT") {
-          const newStatus = payload.new.status;
-          if (!newStatus || newStatus === "pending" || newStatus === "new") {
-            triggerNewOrderAlert(payload.new.id);
-          }
-        }
-        fetchOrders();
-      },
-    )
-    .subscribe();
-}
+let globalChannel = null;
 
 onMounted(() => {
-  // Listen for initial user interaction to unlock audio playback restrictions on iPad
   const unlockOnInteraction = () => {
     if (typeof unlockAudio === "function") unlockAudio();
   };
@@ -223,7 +61,6 @@ watch(restaurantId, (newId) => {
   }
 });
 
-// Re-fetch orders to refresh language-specific menu item names when language changes
 watch(
   () => state.language,
   () => {
@@ -234,9 +71,7 @@ watch(
 );
 
 onUnmounted(() => {
-  if (channel) {
-    supabase.removeChannel(channel);
-  }
+  cleanupRealtime();
 });
 
 const columns = computed(() => [
@@ -351,7 +186,7 @@ function logout() {
             :key="column.status"
             class="flex flex-col rounded-2xl bg-stone-50/60 p-3 border border-stone-200/60 min-h-[600px] overflow-hidden"
           >
-            <!-- Column Header with Status Dot -->
+            <!-- Column Header -->
             <div
               class="-mx-3 -mt-3 mb-3 flex items-center justify-between px-4 py-3 bg-white border-b border-stone-200/60"
             >
@@ -414,7 +249,6 @@ function logout() {
                     :key="item.id"
                     class="bg-white p-3 rounded-xl border border-stone-200/60 shadow-2xs space-y-2"
                   >
-                    <!-- Quantity and Item Name Row -->
                     <div class="flex items-center gap-3">
                       <span
                         class="bg-amber-400 text-stone-950 font-black text-sm px-2.5 py-1 rounded-lg flex-shrink-0 text-center min-w-[36px]"
@@ -429,17 +263,20 @@ function logout() {
                       </span>
                     </div>
 
-                    <!-- Item Note Row -->
                     <div
                       v-if="item.note"
-                      class="text-xs font-semibold text-stone-700 bg-amber-50 border border-amber-200/70 rounded-lg px-2.5 py-1.5 w-full flex items-center gap-1.5"
+                      class="text-xs mt-1 pl-6 font-semibold"
+                      :class="
+                        item.note.toLowerCase().includes('แพ้') ||
+                        item.note.toLowerCase().includes('allergic') ||
+                        item.note.toLowerCase().includes('allergy')
+                          ? 'text-red-600 bg-red-50 p-2 rounded-lg border border-red-200 font-bold'
+                          : 'text-brand italic'
+                      "
                     >
-                      <span class="text-amber-700 font-bold">
-                        {{
-                          state.language === "en" ? "Note" : "หมายเหตุ"
-                        }}:</span
-                      >
-                      <span>{{ item.note }}</span>
+                      {{ state.language === "en" ? "Note:" : "หมายเหตุ:" }} "{{
+                        item.note
+                      }}"
                     </div>
                   </div>
                 </div>
@@ -484,7 +321,6 @@ function logout() {
     </div>
 
     <MobileNav :items="navItems" />
-
     <IncomingOrderModal />
   </div>
 </template>

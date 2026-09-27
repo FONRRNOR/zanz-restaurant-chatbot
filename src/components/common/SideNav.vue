@@ -16,9 +16,10 @@ import {
   QrCode,
 } from "@lucide/vue";
 
-import { ref, computed } from "vue";
+import { ref, computed, onMounted } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { useAppState } from "../../services/appState";
+import { supabase } from "../../supabaseClient";
 
 defineProps({
   items: { type: Array, required: true },
@@ -31,11 +32,32 @@ const route = useRoute();
 const { state, cartItems, t, signOut } = useAppState();
 
 const showLogoutModal = ref(false);
+const pendingOrdersCount = ref(0); // เก็บจำนวนออเดอร์ที่รอจัดการ
 
 const totalCartCount = computed(() => {
   const cart = state.cart || [];
   return cart.reduce((total, item) => total + (item.quantity || 0), 0);
 });
+
+// ฟังก์ชันดึงจำนวนออเดอร์ที่ค้างอยู่จาก Supabase (สำหรับ Admin / Staff)
+async function fetchPendingOrdersCount() {
+  try {
+    // เช็คก่อนว่าอยู่หน้าแดชบอร์ด/ระบบหลังบ้านหรือไม่ (เพื่อประหยัดการเรียกข้อมูลถ้าเป็นลูกค้า)
+    if (route.path.startsWith('/customer/')) return;
+
+    // ตัวอย่าง: ดึงออเดอร์ที่มีสถานะรอดำเนินการหรือกำลังทำอยู่ (ปรับเปลี่ยนสถานะตามตารางฐานข้อมูลจริงของคุณได้ครับ)
+    const { count, error } = await supabase
+      .from('orders') // ชื่อตารางออเดอร์ใน Supabase ของคุณ
+      .select('*', { count: 'exact', head: true })
+     .in('status', ['preparing', 'ready', 'pending']); // ดักจับสถานะที่ยังไม่เสร็จ
+
+    if (!error && count !== null) {
+      pendingOrdersCount.value = count;
+    }
+  } catch (err) {
+    console.error("Error fetching pending orders count:", err);
+  }
+}
 
 // กำหนดไอคอนให้ครอบคลุมชื่อกลุ่ม
 const iconMap = {
@@ -62,16 +84,8 @@ const iconMap = {
   ออกจากระบบ: LogOut,
 };
 
-function handleNavClick(item, event) {
-  if (item.label === "Logout") {
-    event.preventDefault();
-    showLogoutModal.value = true;
-  }
-}
-
 function confirmLogout() {
   signOut();
-  // ล้างทั้ง sessionStorage และ localStorage เพื่อให้สอดคล้องกับ Router Guard
   sessionStorage.removeItem("zank-active-user");
   localStorage.removeItem("zank-active-user");
   showLogoutModal.value = false;
@@ -85,15 +99,18 @@ function cancelLogout() {
 function isCustomerItemActive(item) {
   if (route.path === "/customer/menu") {
     const queryCategory = route.query.category;
-
     if (item.label === "All") {
       return !queryCategory;
     }
-
     return queryCategory === item.label;
   }
   return route.path === item.to;
 }
+
+onMounted(() => {
+  fetchPendingOrdersCount();
+  // สามารถทำ Realtime หรือ Interval สั้นๆ คอยเช็คออเดอร์ใหม่ได้ถ้าต้องการ
+});
 </script>
 
 <template>
@@ -128,37 +145,50 @@ function isCustomerItemActive(item) {
         <RouterLink
           v-else
           :to="item.to"
-          class="flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold text-stone-600 transition-all duration-200 hover:bg-softGreen/50"
+          class="flex items-center justify-between rounded-2xl px-4 py-3 text-sm font-semibold transition-all duration-200 hover:bg-softGreen/50"
           :class="
             isCustomerItemActive(item)
               ? 'bg-softGreen text-stone-950 font-black shadow-xs ring-1 ring-brand/10'
               : 'text-stone-600 bg-transparent'
           "
         >
-          <component :is="iconMap[item.label] || Home" :size="20" />
-          {{
-            item.label === "Dashboard"
-              ? state.language === "en"
-                ? "Dashboard"
-                : "หน้าหลัก"
-              : item.label === "Menu Management"
-                ? state.language === "en"
-                  ? "Menu Management"
-                  : "จัดการเมนูอาหาร"
-                : item.label === "Table Management"
+          <!-- ฝั่งซ้าย: ไอคอน + ชื่อเมนู -->
+          <div class="flex items-center gap-3">
+            <component :is="iconMap[item.label] || Home" :size="20" />
+            <span>
+              {{
+                item.label === "Dashboard"
                   ? state.language === "en"
-                    ? "Table Management"
-                    : "จัดการโต๊ะและ QR Code"
-                  : item.label === "Orders"
+                    ? "Dashboard"
+                    : "หน้าหลัก"
+                  : item.label === "Menu Management"
                     ? state.language === "en"
-                      ? "Orders"
-                      : "คำสั่งซื้อ"
-                    : item.label === "Staff Accounts"
+                      ? "Menu Management"
+                      : "จัดการเมนูอาหาร"
+                    : item.label === "Table Management"
                       ? state.language === "en"
-                        ? "Staff Accounts"
-                        : "บัญชีพนักงาน"
-                      : t(item.label)
-          }}
+                        ? "Table Management"
+                        : "จัดการโต๊ะและ QR Code"
+                      : item.label === "Orders"
+                        ? state.language === "en"
+                          ? "Orders"
+                          : "คำสั่งซื้อ"
+                        : item.label === "Staff Accounts"
+                          ? state.language === "en"
+                            ? "Staff Accounts"
+                            : "บัญชีพนักงาน"
+                          : t(item.label)
+              }}
+            </span>
+          </div>
+
+          <!-- ฝั่งขวา: Badge แสดงตัวเลขจำนวนออเดอร์ (แสดงเฉพาะเมนู Orders หรือ ออเดอร์สด) -->
+          <span
+            v-if="(item.label === 'Orders' || item.label === 'Live Orders' || item.label === 'ออเดอร์สด') && pendingOrdersCount > 0"
+            class="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-red-500 px-1.5 text-[10px] font-black text-white shadow-xs animate-pulse"
+          >
+            {{ pendingOrdersCount }}
+          </span>
         </RouterLink>
 
         <!-- แสดง Table Management ต่อจาก Staff Accounts เมื่ออยู่ในโหมด Owner -->
@@ -200,7 +230,7 @@ function isCustomerItemActive(item) {
       </RouterLink>
     </div>
 
-    <!-- ย้าย Modal ออกไปครอบที่ <body> ด้วย Teleport แก้ปัญหาถูก Sticky Header ฝั่งขวาทับ -->
+    <!-- Modal ยืนยันออกจากระบบ -->
     <Teleport to="body">
       <div
         v-if="showLogoutModal"

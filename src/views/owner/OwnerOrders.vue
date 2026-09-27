@@ -1,7 +1,7 @@
 <script setup>
-import { computed, ref, onMounted, onUnmounted } from "vue";
-import { supabase } from "../../supabaseClient";
+import { ref, watch, onMounted, onUnmounted } from "vue";
 import { useAppState } from "../../services/appState";
+import { useOwnerOrders } from "../../composables/owner/useOwnerOrders";
 
 import MobileNav from "../../components/common/MobileNav.vue";
 import SideNav from "../../components/common/SideNav.vue";
@@ -9,21 +9,82 @@ import StatusPill from "../../components/common/StatusPill.vue";
 import TopBar from "../../components/common/TopBar.vue";
 
 const { state } = useAppState();
-const orders = ref([]);
-const selected = ref(null);
-const filter = ref("active");
-const loading = ref(true);
-const restaurantId = ref("");
-let realTimeSubscription = null;
 
-// Modal States
-const showCheckoutModal = ref(false);
-const paymentMethod = ref("qr"); // 'qr' or 'cash'
-const isProcessingPayment = ref(false);
-const paymentSuccess = ref(false);
+// เรียกใช้ Composable
+const {
+  selected,
+  filter,
+  showCheckoutModal,
+  paymentMethod,
+  isProcessingPayment,
+  paymentSuccess,
+  promptpayId,
+  statuses,
+  filteredOrders,
+  counts,
+  orderTotal,
+  canCancel,
+  canAdvance,
+  canRollback,
+  updateOrderStatus,
+  rollbackOrderStatus,
+  cancelOrder,
+  getStatusLabel,
+  openCheckoutModal,
+  closeCheckoutModal,
+  confirmPayment,
+  fetchOrders,
+} = useOwnerOrders(state);
 
-// Phone number or Citizen ID linked to store PromptPay
-const promptpayId = ref("0987674247");
+// State สำหรับควบคุม Modal แจ้งเตือนออเดอร์ใหม่ฝั่ง Admin
+const showNewOrderAlert = ref(false);
+const latestOrderAlert = ref(null);
+
+// ตัวแปรเก็บ Interval สำหรับ Polling
+let pollInterval = null;
+
+// ฟังก์ชันสำหรับเรียกเปิดแจ้งเตือน
+const triggerNewOrderAlert = (orderData) => {
+  latestOrderAlert.value = orderData;
+  showNewOrderAlert.value = true;
+};
+
+// ฟังก์ชันปิดแจ้งเตือน
+const closeNewOrderAlert = () => {
+  showNewOrderAlert.value = false;
+  latestOrderAlert.value = null;
+};
+
+// เฝ้าระวังจำนวนออเดอร์ใหม่ ถ้าเพิ่มขึ้น ให้เด้ง Modal แจ้งเตือนอัตโนมัติ
+watch(
+  () => counts.value.new,
+  (newVal, oldVal) => {
+    if (newVal > (oldVal || 0) && filteredOrders.value.length > 0) {
+      // ค้นหาออเดอร์ล่าสุดที่มีสถานะเป็น 'new'
+      const latestNewOrder = filteredOrders.value.find(
+        (o) => o.status === "new",
+      );
+      if (latestNewOrder && !showNewOrderAlert.value) {
+        triggerNewOrderAlert(latestNewOrder);
+      }
+    }
+  },
+);
+
+// ตั้งค่าดึงข้อมูลอัตโนมัติ (Polling) ทุกๆ 5 วินาที เพื่อให้หน้าเว็บอัปเดตออเดอร์ใหม่โดยไม่ต้องรีเฟรช
+onMounted(() => {
+  fetchOrders(); // โหลดครั้งแรกตอนเข้าหน้า
+  pollInterval = setInterval(() => {
+    fetchOrders();
+  }, 5000); // ทุก 5 วินาที
+});
+
+// ล้าง Interval เมื่อออกจากหน้า เพื่อป้องกัน memory leak
+onUnmounted(() => {
+  if (pollInterval) {
+    clearInterval(pollInterval);
+  }
+});
 
 const ownerNav = [
   { label: "Dashboard", to: "/owner/dashboard", short: "Home" },
@@ -32,337 +93,6 @@ const ownerNav = [
   { label: "Staff Accounts", to: "/owner/staff-accounts", short: "Staff" },
   { label: "Logout", to: "/logout", short: "Logout" },
 ];
-
-const statuses = ["active", "kitchen", "ready", "completed", "paid"];
-const steps = ["new", "preparing", "ready", "completed"];
-
-function mapDbStatusToUi(dbStatus) {
-  const mapping = {
-    pending: "new",
-    preparing: "preparing",
-    ready: "ready",
-    served: "completed",
-    paid: "paid",
-    cancelled: "cancelled",
-  };
-  return mapping[dbStatus] || dbStatus;
-}
-
-function mapUiStatusToDb(uiStatus) {
-  const mapping = {
-    new: "pending",
-    preparing: "preparing",
-    ready: "ready",
-    completed: "served",
-    paid: "paid",
-  };
-  return mapping[uiStatus] || uiStatus;
-}
-
-function formatOrder(dbOrder) {
-  const dbItems = dbOrder.order_items || [];
-
-  const formattedItems = dbItems.map((item) => {
-    let itemPrice = parseFloat(item.price_at_order || item.price || 0);
-
-    return {
-      name:
-        item.menu_name ||
-        (state.language === "en" ? "Unknown Item" : "ไม่ระบุชื่อเมนู"),
-      quantity: parseInt(item.quantity || 1),
-      price: itemPrice,
-      note: item.note || "",
-    };
-  });
-
-  const allergyList = [];
-
-  return {
-    id: dbOrder.id,
-    orderNumber: dbOrder.order_code || dbOrder.id,
-    tableNumber: dbOrder.table_number || "N/A",
-    status: mapDbStatusToUi(dbOrder.status),
-    allergies: allergyList,
-    items: formattedItems,
-    customerNote: dbOrder.customer_note || "",
-    totalPrice: parseFloat(dbOrder.total_price || 0),
-    time: new Date(dbOrder.created_at).toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-    }),
-    raw: dbOrder,
-  };
-}
-
-// Asynchronously fetch order list with items from Supabase
-async function fetchOrders() {
-  if (!restaurantId.value) return;
-
-  loading.value = true;
-  const { data, error } = await supabase
-    .from("orders")
-    .select("*, order_items(*)")
-    .eq("restaurant_id", restaurantId.value)
-    .order("created_at", { ascending: true });
-
-  if (!error && data) {
-    orders.value = data.map(formatOrder);
-    const currentFiltered = getFilteredArray(orders.value, filter.value);
-
-    if (selected.value) {
-      const updatedSelected = orders.value.find(
-        (o) => o.id === selected.value.id,
-      );
-      if (updatedSelected) {
-        selected.value = updatedSelected;
-      } else {
-        selected.value = currentFiltered.length > 0 ? currentFiltered[0] : null;
-      }
-    } else if (currentFiltered.length > 0) {
-      selected.value = currentFiltered[0];
-    }
-  } else {
-    console.error("Error fetching orders:", error);
-  }
-  loading.value = false;
-}
-
-// Asynchronously advance order status to next step in database
-async function updateOrderStatus(orderId, currentUiStatus) {
-  const currentIdx = steps.indexOf(currentUiStatus);
-  if (currentIdx >= steps.length - 1) return;
-
-  const nextUiStatus = steps[currentIdx + 1];
-  const nextDbStatus = mapUiStatusToDb(nextUiStatus);
-
-  const orderIndex = orders.value.findIndex((o) => o.id === orderId);
-  if (orderIndex !== -1) orders.value[orderIndex].status = nextUiStatus;
-  if (selected.value && selected.value.id === orderId)
-    selected.value.status = nextUiStatus;
-
-  const { error } = await supabase
-    .from("orders")
-    .update({ status: nextDbStatus })
-    .eq("id", orderId);
-
-  if (error) {
-    console.error("Error updating status:", error);
-    fetchOrders();
-  }
-}
-
-// Asynchronously mark order as cancelled in database
-async function cancelOrder(orderId) {
-  const confirmCancel = confirm(
-    state.language === "en"
-      ? "Are you sure you want to cancel this order?"
-      : "คุณแน่ใจหรือไม่ที่จะยกเลิกคำสั่งซื้อนี้?",
-  );
-  if (!confirmCancel) return;
-
-  const { error } = await supabase
-    .from("orders")
-    .update({ status: "cancelled" })
-    .eq("id", orderId);
-
-  if (!error) {
-    fetchOrders();
-  } else {
-    console.error("Error cancelling order:", error);
-  }
-}
-
-function getStatusLabel(statusKey) {
-  const labels = {
-    active: state.language === "en" ? "Active" : "ปัจจุบัน (ทั้งหมด)",
-    kitchen: state.language === "en" ? "Kitchen" : "ในครัว (ใหม่/กำลังทำ)",
-    ready: state.language === "en" ? "To Serve" : "รอเสิร์ฟ",
-    completed: state.language === "en" ? "To Pay" : "รอเช็คบิล",
-    paid: state.language === "en" ? "History" : "ประวัติ (จ่ายแล้ว)",
-  };
-  return labels[statusKey?.toLowerCase()] || statusKey;
-}
-
-function getFilteredArray(allOrders, currentFilter) {
-  return allOrders.filter((order) => {
-    if (currentFilter === "active")
-      return order.status !== "paid" && order.status !== "cancelled";
-
-    if (currentFilter === "kitchen")
-      return order.status === "new" || order.status === "preparing";
-
-    return order.status === currentFilter;
-  });
-}
-
-const filteredOrders = computed(() =>
-  getFilteredArray(orders.value, filter.value),
-);
-
-const counts = computed(() => ({
-  new: orders.value.filter((order) => order.status === "new").length,
-  preparing: orders.value.filter((order) => order.status === "preparing")
-    .length,
-  ready: orders.value.filter((order) => order.status === "ready").length,
-  completed: orders.value.filter((order) => order.status === "completed")
-    .length,
-  paid: orders.value.filter((order) => order.status === "paid").length,
-}));
-
-const orderTotal = computed(() =>
-  selected.value ? selected.value.totalPrice : 0,
-);
-
-const canCancel = computed(
-  () =>
-    selected.value &&
-    !["completed", "cancelled", "paid"].includes(selected.value.status),
-);
-
-const canAdvance = computed(
-  () =>
-    selected.value &&
-    steps.indexOf(selected.value.status) < steps.length - 1 &&
-    selected.value.status !== "cancelled",
-);
-
-// Asynchronously revert order status to previous step in database
-async function rollbackOrderStatus(orderId, currentUiStatus) {
-  const currentIdx = steps.indexOf(currentUiStatus);
-  if (currentIdx <= 0) return;
-
-  const prevUiStatus = steps[currentIdx - 1];
-  const prevDbStatus = mapUiStatusToDb(prevUiStatus);
-
-  const orderIndex = orders.value.findIndex((o) => o.id === orderId);
-  if (orderIndex !== -1) orders.value[orderIndex].status = prevUiStatus;
-  if (selected.value) selected.value.status = prevUiStatus;
-
-  const { error } = await supabase
-    .from("orders")
-    .update({ status: prevDbStatus })
-    .eq("id", orderId);
-
-  if (error) {
-    console.error("Error rolling back status:", error);
-    fetchOrders();
-  }
-}
-
-const canRollback = computed(
-  () =>
-    selected.value &&
-    steps.indexOf(selected.value.status) > 0 &&
-    selected.value.status !== "paid" &&
-    selected.value.status !== "cancelled",
-);
-
-function openCheckoutModal() {
-  if (!selected.value) return;
-  paymentMethod.value = "qr";
-  paymentSuccess.value = false;
-  isProcessingPayment.value = false;
-  showCheckoutModal.value = true;
-}
-
-function closeCheckoutModal() {
-  if (isProcessingPayment.value && !paymentSuccess.value) return;
-  showCheckoutModal.value = false;
-}
-
-// Asynchronously process order checkout, set paid status, and clear table session via RPC
-async function confirmPayment() {
-  if (!selected.value) return;
-  isProcessingPayment.value = true;
-
-  try {
-    const { error: updateError } = await supabase
-      .from("orders")
-      .update({ status: "paid" })
-      .eq("id", selected.value.id);
-
-    if (updateError) throw updateError;
-
-    const targetTableId =
-      selected.value.raw.table_id || selected.value.raw.table_number;
-    const targetRestaurantId =
-      selected.value.raw.restaurant_id || restaurantId.value;
-
-    const { error: rpcError } = await supabase.rpc("clear_table_session", {
-      p_table_id: targetTableId,
-      p_restaurant_id: targetRestaurantId,
-    });
-
-    if (rpcError) throw rpcError;
-
-    paymentSuccess.value = true;
-    setTimeout(() => {
-      showCheckoutModal.value = false;
-      if (filter.value === "active" || filter.value === "completed") {
-        selected.value = null;
-      }
-      fetchOrders();
-    }, 2000);
-  } catch (err) {
-    console.error("Error clearing table:", err);
-    alert(
-      state.language === "en"
-        ? "Error processing payment. Check console for details."
-        : "เกิดข้อผิดพลาดในการชำระเงิน ดูรายละเอียดใน Console",
-    );
-    isProcessingPayment.value = false;
-  }
-}
-
-onMounted(() => {
-  const savedLanguage = localStorage.getItem("zank-language");
-  if (savedLanguage) {
-    state.language = savedLanguage;
-  }
-
-  const savedUserJson = sessionStorage.getItem("zank-active-user");
-  if (savedUserJson) {
-    try {
-      const localUser = JSON.parse(savedUserJson);
-      restaurantId.value = localUser.restaurant_id || "";
-    } catch (e) {
-      console.error("Error parsing user session:", e);
-    }
-  }
-
-  if (!restaurantId.value && state.activeUser) {
-    restaurantId.value = state.activeUser.restaurant_id || "";
-  }
-
-  fetchOrders();
-
-  if (restaurantId.value) {
-    realTimeSubscription = supabase
-      .channel(`public:orders-${restaurantId.value}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "orders",
-          filter: `restaurant_id=eq.${restaurantId.value}`,
-        },
-        () => fetchOrders(),
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "order_items" },
-        () => fetchOrders(),
-      )
-      .subscribe();
-  }
-});
-
-onUnmounted(() => {
-  if (realTimeSubscription) {
-    supabase.removeChannel(realTimeSubscription);
-  }
-});
 </script>
 
 <template>
@@ -455,7 +185,6 @@ onUnmounted(() => {
           <article
             class="bg-white rounded-3xl border border-stone-200 shadow-sm overflow-hidden flex flex-col h-[calc(100vh-140px)]"
           >
-            <!-- Header Sticky -->
             <div
               class="px-6 py-5 border-b border-stone-200 bg-stone-50/80 flex justify-between items-center sticky top-0 z-10"
             >
@@ -471,7 +200,6 @@ onUnmounted(() => {
               </span>
             </div>
 
-            <!-- Scrollable orders box -->
             <div class="flex-1 overflow-y-auto custom-scrollbar">
               <div
                 v-if="filteredOrders.length === 0"
@@ -505,7 +233,6 @@ onUnmounted(() => {
                       : '',
                   ]"
                 ></div>
-
                 <div class="flex items-center gap-4 pl-2 w-full">
                   <div
                     class="w-14 h-14 rounded-2xl flex flex-col items-center justify-center shrink-0 shadow-sm border transition-colors"
@@ -517,14 +244,12 @@ onUnmounted(() => {
                   >
                     <span
                       class="text-[9px] font-black uppercase tracking-wider opacity-80 mb-[-4px]"
+                      >{{ state.language === "en" ? "Table" : "โต๊ะ" }}</span
                     >
-                      {{ state.language === "en" ? "Table" : "โต๊ะ" }}
-                    </span>
-                    <span class="text-xl font-black">
-                      {{ order.tableNumber.replace("T-", "") }}
-                    </span>
+                    <span class="text-xl font-black">{{
+                      order.tableNumber.replace("T-", "")
+                    }}</span>
                   </div>
-
                   <div class="flex-1 min-w-0">
                     <div class="flex items-center gap-2 mb-1">
                       <p
@@ -539,7 +264,6 @@ onUnmounted(() => {
                         >Allergy Alert</span
                       >
                     </div>
-
                     <div
                       class="flex items-center gap-2 text-xs font-semibold text-stone-500"
                     >
@@ -587,7 +311,6 @@ onUnmounted(() => {
                     </div>
                   </div>
                 </div>
-
                 <div class="shrink-0 ml-2">
                   <StatusPill :status="order.status" />
                 </div>
@@ -612,7 +335,6 @@ onUnmounted(() => {
                   {{ selected.tableNumber }}
                 </p>
               </div>
-
               <div
                 v-if="['completed', 'paid'].includes(selected.status)"
                 class="px-3 py-1 rounded-full text-[10px] font-black tracking-wider uppercase flex items-center gap-1 mt-1"
@@ -737,23 +459,29 @@ onUnmounted(() => {
                       {{ item.quantity }}x {{ item.name }}
                     </span>
                     <span class="font-semibold text-stone-500"
-                      >{{ item.price * item.quantity }}
-                      {{ state.language === "en" ? "B." : "บ." }}</span
+                      >{{ (item.price * item.quantity).toLocaleString() }}
+                      {{ state.language === "en" ? "Baht." : "บาท." }}</span
                     >
                   </div>
-                  <p
+                  <div
                     v-if="item.note"
-                    class="text-xs text-brand mt-1 italic pl-6"
+                    class="text-xs mt-1 pl-6 font-semibold"
+                    :class="
+                      item.note.toLowerCase().includes('แพ้') ||
+                      item.note.toLowerCase().includes('allergic') ||
+                      item.note.toLowerCase().includes('allergy')
+                        ? 'text-red-600 bg-red-50 p-2 rounded-lg border border-red-200 font-bold'
+                        : 'text-brand italic'
+                    "
                   >
                     {{ state.language === "en" ? "Note:" : "หมายเหตุ:" }} "{{
                       item.note
                     }}"
-                  </p>
+                  </div>
                 </div>
               </div>
             </div>
 
-            <!-- Action buttons -->
             <div
               v-if="
                 !['completed', 'paid', 'cancelled'].includes(selected.status)
@@ -785,7 +513,6 @@ onUnmounted(() => {
               </button>
             </div>
 
-            <!-- Open Checkout and Clear Table modal -->
             <div
               v-if="selected.status === 'completed'"
               class="pt-6 border-t border-stone-100 mt-4"
@@ -821,7 +548,147 @@ onUnmounted(() => {
     </div>
     <MobileNav :items="ownerNav" />
 
-    <!-- Checkout Modal with Thai QR Payment -->
+    <!-- =========================================================
+         New Order Notification Modal (สำหรับแจ้งเตือนฝั่ง Admin)
+         ไม่มีปุ่ม Approve, ไม่มีเสียง, ไม่มีนับถอยหลัง
+         ========================================================= -->
+    <Transition name="fade">
+      <div
+        v-if="showNewOrderAlert && latestOrderAlert"
+        class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/60 backdrop-blur-sm"
+      >
+        <div
+          class="bg-white w-full max-w-lg rounded-3xl shadow-2xl border border-stone-200 overflow-hidden transform transition-all animate-in fade-in zoom-in-95 duration-150"
+        >
+          <!-- Header Clean Green Theme -->
+          <div class="bg-emerald-700 text-white px-6 py-5">
+            <div class="flex items-center justify-between">
+              <div>
+                <div
+                  class="inline-flex justify-center items-center bg-emerald-800/60 px-3.5 py-1 rounded-md mb-1"
+                >
+                  <span class="relative flex h-2 w-2 mr-2">
+                    <span
+                      class="relative inline-flex rounded-full h-2 w-2 bg-emerald-400"
+                    ></span>
+                  </span>
+
+                  <span
+                    class="text-[12px] font-bold tracking-wider uppercase text-emerald-200 leading-none pt-[2px]"
+                  >
+                    {{
+                      state.language === "en"
+                        ? "New Order Notification"
+                        : "การแจ้งเตือนคำสั่งซื้อใหม่"
+                    }}
+                  </span>
+                </div>
+
+                <h2 class="text-2xl font-black tracking-tight mt-[4px]">
+                  {{
+                    state.language === "en"
+                      ? "Incoming Kitchen Order!"
+                      : "มีรายการออเดอร์ใหม่เข้ามา!"
+                  }}
+                </h2>
+              </div>
+            </div>
+          </div>
+
+          <!-- Order Summary -->
+          <div
+            class="px-6 py-5 bg-stone-50 border-b border-stone-200 flex flex-col gap-1.5"
+          >
+            <div class="flex justify-between items-end">
+              <span
+                class="text-xs font-medium text-stone-400 uppercase tracking-wide w-1/3 text-left"
+              >
+                {{ state.language === "en" ? "Table" : "โต๊ะ" }}
+              </span>
+
+              <span
+                class="text-xs font-medium text-stone-400 uppercase tracking-wide w-1/3 text-center"
+              >
+                {{ state.language === "en" ? "Order Time" : "เวลาสั่งซื้อ" }}
+              </span>
+
+              <span
+                class="text-xs font-medium text-stone-400 uppercase tracking-wide w-1/3 text-right"
+              >
+                {{ state.language === "en" ? "Order ID" : "รหัสออเดอร์" }}
+              </span>
+            </div>
+
+            <div class="flex justify-between items-baseline">
+              <span class="text-2xl font-bold text-stone-800 w-1/3 text-left">
+                Table {{ latestOrderAlert.tableNumber }}
+              </span>
+
+              <span
+                class="text-lg font-semibold text-stone-700 w-1/3 text-center"
+              >
+                {{ latestOrderAlert.time || "14:30" }}
+              </span>
+
+              <span
+                class="text-lg font-semibold text-stone-700 font-mono w-1/3 text-right"
+              >
+                #{{ latestOrderAlert.orderNumber }}
+              </span>
+            </div>
+          </div>
+
+          <!-- Menu Items List -->
+          <div class="p-6">
+            <div class="space-y-3 max-h-64 overflow-y-auto pr-1">
+              <div
+                v-for="(item, idx) in latestOrderAlert.items"
+                :key="idx"
+                class="flex items-start justify-between gap-3 p-3.5 rounded-2xl bg-stone-50/80 border border-stone-200/80"
+              >
+                <div class="flex-1">
+                  <div class="flex items-baseline gap-2">
+                    <span class="text-lg font-black text-emerald-700">
+                      {{ item.quantity }}&times;
+                    </span>
+
+                    <span
+                      class="text-base font-bold text-stone-900 leading-snug"
+                    >
+                      {{ item.name }}
+                    </span>
+                  </div>
+
+                  <p
+                    v-if="item.note && item.note !== '-'"
+                    class="mt-2 inline-flex items-center px-2 py-0.5 rounded-lg text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200"
+                  >
+                    {{ item.note }}
+                  </p>
+                </div>
+
+                <span
+                  class="text-xs font-bold text-stone-400 whitespace-nowrap mt-1"
+                >
+                  {{ item.quantity }}
+                  {{ state.language === "en" ? "item(s)" : "รายการ" }}
+                </span>
+              </div>
+            </div>
+
+            <!-- Got It / Close Button -->
+            <button
+              @click="closeNewOrderAlert"
+              class="w-full mt-6 py-4 rounded-2xl bg-stone-800 hover:bg-stone-900 active:scale-[0.98] text-white font-extrabold text-base shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <span>{{ state.language === "en" ? "Got It" : "รับทราบ" }}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+
+    <!-- Checkout Modal -->
     <Transition name="fade">
       <div
         v-if="showCheckoutModal"
@@ -830,7 +697,6 @@ onUnmounted(() => {
         <div
           class="bg-white rounded-[2rem] shadow-2xl w-full max-w-md overflow-hidden flex flex-col animate-in zoom-in-95 duration-200"
         >
-          <!-- Success State -->
           <div
             v-if="paymentSuccess"
             class="p-10 flex flex-col items-center text-center justify-center min-h-[450px]"
@@ -868,9 +734,7 @@ onUnmounted(() => {
             </p>
           </div>
 
-          <!-- Checkout Details -->
           <div v-else class="flex flex-col h-full">
-            <!-- Modal Header -->
             <div
               class="px-6 py-5 border-b border-stone-100 flex justify-between items-center bg-stone-50"
             >
@@ -906,9 +770,7 @@ onUnmounted(() => {
               </button>
             </div>
 
-            <!-- Modal Body -->
             <div class="p-6">
-              <!-- Total Amount Due -->
               <div class="text-center mb-6">
                 <p
                   class="text-sm font-bold text-stone-500 uppercase tracking-wider mb-1"
@@ -924,12 +786,11 @@ onUnmounted(() => {
                     orderTotal.toLocaleString()
                   }}</span>
                   <span class="text-2xl text-stone-400">{{
-                    state.language === "en" ? "B." : "บ."
+                    state.language === "en" ? "Baht." : "บาท."
                   }}</span>
                 </div>
               </div>
 
-              <!-- Payment Method Tabs -->
               <div class="flex p-1 bg-stone-100 rounded-xl mb-6">
                 <button
                   @click="paymentMethod = 'qr'"
@@ -955,20 +816,16 @@ onUnmounted(() => {
                 </button>
               </div>
 
-              <!-- Payment Method Content -->
               <div
                 class="min-h-[260px] flex flex-col items-center justify-center"
               >
-                <!-- QR Code Display -->
                 <div
                   v-if="paymentMethod === 'qr'"
                   class="flex flex-col items-center w-full animate-in fade-in zoom-in-95 duration-200"
                 >
-                  <!-- Thai QR Payment Standee Layout -->
                   <div
                     class="bg-white rounded-xl shadow-md border border-stone-200 overflow-hidden inline-block w-56 mb-3"
                   >
-                    <!-- Thai QR Header -->
                     <div
                       class="bg-[#113566] py-2 text-center border-b-[3px] border-[#ed1c24]"
                     >
@@ -976,7 +833,6 @@ onUnmounted(() => {
                         >THAI QR PAYMENT</span
                       >
                     </div>
-                    <!-- PromptPay QR Code Image -->
                     <div class="p-3 bg-white flex justify-center">
                       <img
                         :src="`https://promptpay.io/${promptpayId}/${orderTotal}.png`"
@@ -984,7 +840,6 @@ onUnmounted(() => {
                         class="w-40 h-40 object-contain"
                       />
                     </div>
-                    <!-- PromptPay Logo Footer -->
                     <div
                       class="bg-stone-50 py-2.5 text-center border-t border-stone-100 flex flex-col items-center justify-center"
                     >
@@ -998,7 +853,6 @@ onUnmounted(() => {
                       </div>
                     </div>
                   </div>
-
                   <p class="text-xs text-stone-500 font-medium">
                     {{
                       state.language === "en"
@@ -1007,8 +861,6 @@ onUnmounted(() => {
                     }}
                   </p>
                 </div>
-
-                <!-- Cash Payment Display -->
                 <div
                   v-else
                   class="flex flex-col items-center w-full animate-in fade-in zoom-in-95 duration-200 text-center px-4"
@@ -1048,7 +900,6 @@ onUnmounted(() => {
               </div>
             </div>
 
-            <!-- Modal Footer Action -->
             <div class="p-6 pt-0 mt-auto">
               <button
                 @click="confirmPayment"
@@ -1063,7 +914,6 @@ onUnmounted(() => {
                     : 'active:scale-[0.98]',
                 ]"
               >
-                <!-- Loading Spinner -->
                 <svg
                   v-if="isProcessingPayment"
                   class="animate-spin -ml-1 mr-2 h-5 w-5 text-white"
@@ -1085,7 +935,6 @@ onUnmounted(() => {
                     d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                   ></path>
                 </svg>
-
                 {{
                   isProcessingPayment
                     ? state.language === "en"
@@ -1118,8 +967,6 @@ onUnmounted(() => {
 .custom-scrollbar:hover::-webkit-scrollbar-thumb {
   background-color: #a8a29e;
 }
-
-/* Modal Transition Effect */
 .fade-enter-active,
 .fade-leave-active {
   transition: opacity 0.2s ease;

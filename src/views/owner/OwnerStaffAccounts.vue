@@ -13,26 +13,26 @@ import { supabase } from "../../supabaseClient";
 const { state } = useAppState();
 
 const ownerNav = [
-  { label: 'Dashboard', to: '/owner/dashboard', short: 'Home' },
-  { label: 'Menu Management', to: '/owner/menu-management', short: 'Menu' },
-  { label: 'Orders', to: '/owner/orders' },
-  { label: 'Staff Accounts', to: '/owner/staff-accounts', short: 'Staff' },
-  { label: 'Logout', to: '/logout', short: 'Logout' },
+  { label: "Dashboard", to: "/owner/dashboard", short: "Home" },
+  { label: "Menu Management", to: "/owner/menu-management", short: "Menu" },
+  { label: "Orders", to: "/owner/orders" },
+  { label: "Staff Accounts", to: "/owner/staff-accounts", short: "Staff" },
+  { label: "Logout", to: "/logout", short: "Logout" },
 ];
 
 // --- Reactive State Setup ---
 const staffItems = ref([]);
 const currentOwnerId = ref(null);
-const restaurantId = ref(""); 
-const restaurantName = ref(""); 
+const restaurantId = ref("");
+const restaurantName = ref("");
 const isLoading = ref(false);
 
 const form = reactive({
-  fullName: '',
-  email: '',
-  role: 'kitchen_staff',
-  password: '',
-  confirmPassword: '',
+  fullName: "",
+  email: "",
+  role: "kitchen_staff",
+  password: "",
+  confirmPassword: "",
 });
 
 // --- Edit Modal State ---
@@ -42,7 +42,7 @@ const editingStaff = reactive({
   id: "",
   fullName: "",
   email: "",
-  newPassword: ""
+  newPassword: "",
 });
 
 /**
@@ -51,25 +51,32 @@ const editingStaff = reactive({
 async function fetchStaffData() {
   isLoading.value = true;
   try {
-    // 1. Retrieve the active user session data from localStorage saved during login
+    const savedLanguage = localStorage.getItem("zank-language");
+    if (savedLanguage) {
+      state.language = savedLanguage;
+    }
+
     const savedUserJson = sessionStorage.getItem("zank-active-user");
-    
-    if (!savedUserJson) throw new Error("Please log in again.");
-    
+
+    if (!savedUserJson)
+      throw new Error(
+        state.language === "en"
+          ? "Please log in again."
+          : "กรุณาเข้าสู่ระบบใหม่อีกครั้ง",
+      );
+
     const activeUser = JSON.parse(savedUserJson);
 
-    // 2. Map session payload directly to reactive parameters without relying on old Supabase Auth state
     currentOwnerId.value = activeUser.id;
     restaurantId.value = activeUser.restaurant_id || "";
     restaurantName.value = activeUser.restaurant_name || "Zank Restaurant";
 
-    // 3. Query all staff members associated with the current restaurant_id
     if (restaurantId.value) {
       const { data: staffData, error: staffError } = await supabase
         .from("profiles")
         .select("*")
         .eq("restaurant_id", restaurantId.value)
-        .neq("role", "admin"); // Exclude admin/owner accounts from the staff list
+        .neq("role", "admin");
 
       if (staffError) throw staffError;
 
@@ -84,7 +91,6 @@ async function fetchStaffData() {
     }
   } catch (error) {
     console.error("Error loading staff data:", error.message);
-    alert("Error loading staff data: " + error.message);
   } finally {
     isLoading.value = false;
   }
@@ -94,32 +100,27 @@ onMounted(() => {
   fetchStaffData();
 });
 
-/**
- * Opens the Edit Modal and maps selected staff data into reactive fields
- */
 function handleEditStaff(user) {
   Object.assign(editingStaff, {
     id: user.id,
     fullName: user.fullName === "-" ? "" : user.fullName,
     email: user.email,
-    newPassword: "" 
+    newPassword: "",
   });
   isEditModalOpen.value = true;
 }
 
-/**
- * Closes the Edit Modal safely
- */
 function closeEditModal() {
   isEditModalOpen.value = false;
 }
 
-/**
- * Submits the edited staff details to profiles and updates encryption parameters
- */
 async function submitEdit() {
   if (!editingStaff.fullName || !editingStaff.email) {
-    alert("Name and email fields cannot be empty.");
+    alert(
+      state.language === "en"
+        ? "Name and email fields cannot be empty."
+        : "กรุณากรอกชื่อและอีเมล",
+    );
     return;
   }
 
@@ -128,16 +129,23 @@ async function submitEdit() {
 
     const updatePayload = {
       name: editingStaff.fullName,
-      email: editingStaff.email.trim()
+      email: editingStaff.email.trim(),
     };
 
     if (editingStaff.newPassword) {
       if (editingStaff.newPassword.length < 6) {
-        alert("Password must be at least 6 characters long.");
+        alert(
+          state.language === "en"
+            ? "Password must be at least 6 characters long."
+            : "รหัสผ่านต้องมีความยาวอย่างน้อย 6 ตัวอักษร",
+        );
         return;
       }
       const salt = bcrypt.genSaltSync(10);
-      updatePayload.password_hash = bcrypt.hashSync(editingStaff.newPassword, salt);
+      updatePayload.password_hash = bcrypt.hashSync(
+        editingStaff.newPassword,
+        salt,
+      );
     }
 
     const { error: profileError } = await supabase
@@ -147,32 +155,54 @@ async function submitEdit() {
 
     if (profileError) throw profileError;
 
-    alert("Staff account details updated successfully!");
+    alert(
+      state.language === "en"
+        ? "Staff account details updated successfully!"
+        : "อัปเดตข้อมูลพนักงานเรียบร้อยแล้ว!",
+    );
     isEditModalOpen.value = false;
     await fetchStaffData();
   } catch (error) {
-    alert("Failed to update staff: " + error.message);
+    alert(
+      (state.language === "en"
+        ? "Failed to update staff: "
+        : "เกิดข้อผิดพลาดในการอัปเดต: ") + error.message,
+    );
   } finally {
     isEditingSubmit.value = false;
   }
 }
 
-/**
- * Handles submission for creating a brand-new staff account with bcrypt encryption
- */
 async function submit() {
-  if (!form.fullName || !form.email || !form.password || form.password !== form.confirmPassword) {
-    alert("Please fill out all required fields and ensure passwords match.");
+  if (
+    !form.fullName ||
+    !form.email ||
+    !form.password ||
+    form.password !== form.confirmPassword
+  ) {
+    alert(
+      state.language === "en"
+        ? "Please fill out all required fields and ensure passwords match."
+        : "กรุณากรอกข้อมูลให้ครบถ้วนและตรวจสอบรหัสผ่านให้ตรงกัน",
+    );
     return;
   }
 
   if (form.password.length < 6) {
-    alert("Password must be at least 6 characters long.");
+    alert(
+      state.language === "en"
+        ? "Password must be at least 6 characters long."
+        : "รหัสผ่านต้องมีความยาวอย่างน้อย 6 ตัวอักษร",
+    );
     return;
   }
 
   if (!restaurantId.value) {
-    alert("Restaurant ID not found. Unable to create staff account.");
+    alert(
+      state.language === "en"
+        ? "Restaurant ID not found."
+        : "ไม่พบรหัสร้านอาหาร",
+    );
     return;
   }
 
@@ -180,7 +210,6 @@ async function submit() {
     isLoading.value = true;
     const cleanEmail = form.email.trim();
 
-    // 🌟 Encrypt the form password using Bcrypt
     const salt = bcrypt.genSaltSync(10);
     const securePasswordHash = bcrypt.hashSync(form.password, salt);
 
@@ -190,19 +219,20 @@ async function submit() {
       { auth: { persistSession: false, autoRefreshToken: false } },
     );
 
-    const { data: signUpData, error: signUpError } = await tempSupabase.auth.signUp({
-      email: cleanEmail,
-      password: form.password,
-      options: {
-        data: {
-          name: form.fullName,
-          role: form.role,
-          restaurant_id: restaurantId.value,
-          restaurant_name: restaurantName.value,
-          created_by: currentOwnerId.value,
+    const { data: signUpData, error: signUpError } =
+      await tempSupabase.auth.signUp({
+        email: cleanEmail,
+        password: form.password,
+        options: {
+          data: {
+            name: form.fullName,
+            role: form.role,
+            restaurant_id: restaurantId.value,
+            restaurant_name: restaurantName.value,
+            created_by: currentOwnerId.value,
+          },
         },
-      },
-    });
+      });
 
     if (signUpError) throw signUpError;
 
@@ -217,12 +247,15 @@ async function submit() {
           restaurant_id: restaurantId.value,
           restaurant_name: restaurantName.value,
           created_by: currentOwnerId.value,
-          password_hash: securePasswordHash, 
+          password_hash: securePasswordHash,
         })
         .eq("id", signUpData.user.id);
 
       if (profileError) {
-        if (profileError.message.includes("0 rows") || profileError.details?.includes("0 rows")) {
+        if (
+          profileError.message.includes("0 rows") ||
+          profileError.details?.includes("0 rows")
+        ) {
           const { error: insertError } = await supabase
             .from("profiles")
             .insert([
@@ -234,7 +267,7 @@ async function submit() {
                 restaurant_id: restaurantId.value,
                 restaurant_name: restaurantName.value,
                 created_by: currentOwnerId.value,
-                password_hash: securePasswordHash, 
+                password_hash: securePasswordHash,
               },
             ]);
           if (insertError) throw insertError;
@@ -253,32 +286,60 @@ async function submit() {
       password: "",
       confirmPassword: "",
     });
-    alert("Staff account created and registered securely!");
+    alert(
+      state.language === "en"
+        ? "Staff account created successfully!"
+        : "สร้างบัญชีพนักงานเรียบร้อยแล้ว!",
+    );
   } catch (error) {
-    alert("Failed to create account: " + error.message);
+    alert(
+      (state.language === "en"
+        ? "Failed to create account: "
+        : "ไม่สามารถสร้างบัญชีได้: ") + error.message,
+    );
   } finally {
     isLoading.value = false;
   }
 }
 
-/**
- * Completely removes the staff profile from the database table
- */
 async function handleRemoveStaff(userId) {
-  if (!confirm("Are you sure you want to permanently delete this staff account?")) return;
-    
+  if (
+    !confirm(
+      state.language === "en"
+        ? "Are you sure you want to permanently delete this staff account?"
+        : "คุณแน่ใจหรือไม่ที่จะลบบัญชีพนักงานนี้อย่างถาวร?",
+    )
+  )
+    return;
+
   try {
     isLoading.value = true;
     const { error } = await supabase.from("profiles").delete().eq("id", userId);
     if (error) throw error;
-    
+
     await fetchStaffData();
-    alert("Staff profile deleted permanently.");
+    alert(
+      state.language === "en"
+        ? "Staff profile deleted permanently."
+        : "ลบบัญชีพนักงานเรียบร้อยแล้ว",
+    );
   } catch (error) {
-    alert("Failed to delete staff: " + error.message);
+    alert(
+      (state.language === "en"
+        ? "Failed to delete staff: "
+        : "ลบพนักงานไม่สำเร็จ: ") + error.message,
+    );
   } finally {
     isLoading.value = false;
   }
+}
+
+function formatRole(role) {
+  if (role === "kitchen_staff")
+    return state.language === "en" ? "Kitchen Staff" : "พนักงานครัว";
+  if (role === "reception_staff")
+    return state.language === "en" ? "Reception Staff" : "พนักงานต้อนรับ";
+  return role;
 }
 </script>
 
@@ -288,60 +349,160 @@ async function handleRemoveStaff(userId) {
     <div class="content-shell">
       <SideNav :items="ownerNav" />
       <main class="main-panel">
-        <h1 class="text-4xl font-black">Staff Accounts</h1>
-        <p class="mt-2 text-muted">Create staff logins and manage access to live orders.</p>
+        <h1 class="text-4xl font-black">
+          {{ state.language === "en" ? "Staff Accounts" : "บัญชีพนักงาน" }}
+        </h1>
+        <p class="mt-2 text-muted">
+          {{
+            state.language === "en"
+              ? "Create staff logins and manage access to live orders."
+              : "สร้างบัญชีเข้าใช้งานสำหรับพนักงาน และจัดการสิทธิ์การเข้าถึงออเดอร์สด"
+          }}
+        </p>
 
         <section class="mt-6 grid gap-6 xl:grid-cols-[1fr_380px]">
           <article class="section-card overflow-hidden">
-            <div class="hidden bg-pale px-5 py-4 text-sm font-black text-brand lg:grid lg:grid-cols-[1fr_1.2fr_1fr_.8fr_1fr_1.2fr]">
-              <span>Name</span><span>Email</span><span>Role</span><span>Status</span><span>Last Login</span><span>Actions</span>
+            <div
+              class="hidden bg-pale px-5 py-4 text-sm font-black text-brand lg:grid lg:grid-cols-[1fr_1.2fr_1fr_.8fr_1fr_1.2fr]"
+            >
+              <span>{{ state.language === "en" ? "Name" : "ชื่อ" }}</span>
+              <span>{{ state.language === "en" ? "Email" : "อีเมล" }}</span>
+              <span>{{ state.language === "en" ? "Role" : "ตำแหน่ง" }}</span>
+              <span>{{ state.language === "en" ? "Status" : "สถานะ" }}</span>
+              <span>{{
+                state.language === "en" ? "Last Login" : "เข้าสู่ระบบล่าสุด"
+              }}</span>
+              <span>{{ state.language === "en" ? "Actions" : "จัดการ" }}</span>
             </div>
 
             <div v-if="isLoading" class="p-5 text-center text-muted">
-              Loading staff accounts...
+              {{
+                state.language === "en"
+                  ? "Loading staff accounts..."
+                  : "กำลังโหลดข้อมูลพนักงาน..."
+              }}
             </div>
 
-            <div v-else-if="staffItems.length === 0" class="p-5 text-center text-muted">
-              No staff accounts found for your restaurant.
+            <div
+              v-else-if="staffItems.length === 0"
+              class="p-5 text-center text-muted"
+            >
+              {{
+                state.language === "en"
+                  ? "No staff accounts found for your restaurant."
+                  : "ไม่พบบัญชีพนักงานในร้านของคุณ"
+              }}
             </div>
 
-            <div v-else v-for="user in staffItems" :key="user.id" class="grid gap-3 border-t border-stone-100 p-5 lg:grid-cols-[1fr_1.2fr_1fr_.8fr_1fr_1.2fr] lg:items-center">
+            <div
+              v-else
+              v-for="user in staffItems"
+              :key="user.id"
+              class="grid gap-3 border-t border-stone-100 p-5 lg:grid-cols-[1fr_1.2fr_1fr_.8fr_1fr_1.2fr] lg:items-center"
+            >
               <strong>{{ user.fullName }}</strong>
               <span class="text-sm text-muted">{{ user.email }}</span>
-              <span class="capitalize">{{ user.role.replace('_', ' ') }}</span>
-              <span class="rounded-full px-3 py-1 text-xs font-bold w-fit" :class="user.status === 'active' ? 'bg-pale text-brand' : 'bg-stone-100 text-muted'">{{ user.status }}</span>
+              <span class="capitalize">{{ formatRole(user.role) }}</span>
+              <span
+                class="rounded-full px-3 py-1 text-xs font-bold w-fit"
+                :class="
+                  user.status === 'active'
+                    ? 'bg-pale text-brand'
+                    : 'bg-stone-100 text-muted'
+                "
+                >{{ user.status }}</span
+              >
               <span class="text-sm text-muted">{{ user.lastLogin }}</span>
-              
+
               <div class="flex items-center gap-2">
                 <button
-                  class="flex items-center gap-1.5 rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-xs font-semibold text-stone-700 shadow-sm transition hover:bg-stone-50 hover:text-brand focus:outline-none focus:ring-2 focus:ring-brand/20"
+                  class="flex items-center gap-1.5 rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-xs font-semibold text-stone-700 shadow-sm transition hover:bg-stone-50 hover:text-brand focus:outline-none focus:ring-2 focus:ring-brand/20 cursor-pointer"
                   @click="handleEditStaff(user)"
                 >
-                  Edit
+                  {{ state.language === "en" ? "Edit" : "แก้ไข" }}
                 </button>
                 <button
-                  class="flex items-center gap-1.5 rounded-lg bg-transparent px-3 py-1.5 text-xs font-semibold text-stone-400 transition hover:bg-red-50 hover:text-red-600 focus:outline-none focus:ring-2 focus:ring-red-200"
+                  class="flex items-center gap-1.5 rounded-lg bg-transparent px-3 py-1.5 text-xs font-semibold text-stone-400 transition hover:bg-red-50 hover:text-red-600 focus:outline-none focus:ring-2 focus:ring-red-200 cursor-pointer"
                   @click="handleRemoveStaff(user.id)"
                 >
-                  Remove
+                  {{ state.language === "en" ? "Remove" : "ลบ" }}
                 </button>
               </div>
             </div>
           </article>
 
           <form class="section-card p-5 h-fit" @submit.prevent="submit">
-            <h2 class="text-xl font-black">Add Staff Account</h2>
-            <p class="mt-2 text-sm text-muted">Staff can access Live Orders and Menu Items only. Owner pages remain restricted.</p>
+            <h2 class="text-xl font-black">
+              {{
+                state.language === "en"
+                  ? "Add Staff Account"
+                  : "เพิ่มบัญชีพนักงาน"
+              }}
+            </h2>
+            <p class="mt-2 text-sm text-muted">
+              {{
+                state.language === "en"
+                  ? "Staff can access Live Orders and Menu Items only. Owner pages remain restricted."
+                  : "พนักงานสามารถเข้าถึงได้เฉพาะออเดอร์สดและรายการเมนู หน้าของผู้จัดการจะถูกจำกัดสิทธิ์"
+              }}
+            </p>
             <div class="mt-5 grid gap-3">
-              <input v-model="form.fullName" class="field" placeholder="Full Name" required />
-              <input v-model="form.email" class="field" placeholder="Email Address" type="email" required />
+              <input
+                v-model="form.fullName"
+                class="field"
+                :placeholder="
+                  state.language === 'en' ? 'Full Name' : 'ชื่อ-นามสกุล'
+                "
+                required
+              />
+              <input
+                v-model="form.email"
+                class="field"
+                :placeholder="
+                  state.language === 'en' ? 'Email Address' : 'อีเมล'
+                "
+                type="email"
+                required
+              />
               <select v-model="form.role" class="field">
-                <option value="kitchen_staff">Kitchen Staff</option>
-                <option value="reception_staff">Reception Staff</option>
+                <option value="kitchen_staff">
+                  {{
+                    state.language === "en" ? "Kitchen Staff" : "พนักงานครัว"
+                  }}
+                </option>
+                <option value="reception_staff">
+                  {{
+                    state.language === "en"
+                      ? "Reception Staff"
+                      : "พนักงานต้อนรับ"
+                  }}
+                </option>
               </select>
-              <input v-model="form.password" class="field" placeholder="Temporary Password" type="password" required />
-              <input v-model="form.confirmPassword" class="field" placeholder="Confirm Password" type="password" required />
-              <button class="primary-btn" :disabled="isLoading">Create Account</button>
+              <input
+                v-model="form.password"
+                class="field"
+                :placeholder="
+                  state.language === 'en'
+                    ? 'Temporary Password'
+                    : 'รหัสผ่านชั่วคราว'
+                "
+                type="password"
+                required
+              />
+              <input
+                v-model="form.confirmPassword"
+                class="field"
+                :placeholder="
+                  state.language === 'en'
+                    ? 'Confirm Password'
+                    : 'ยืนยันรหัสผ่าน'
+                "
+                type="password"
+                required
+              />
+              <button class="primary-btn cursor-pointer" :disabled="isLoading">
+                {{ state.language === "en" ? "Create Account" : "สร้างบัญชี" }}
+              </button>
             </div>
           </form>
         </section>
@@ -349,31 +510,107 @@ async function handleRemoveStaff(userId) {
     </div>
     <MobileNav :items="ownerNav" />
 
-    <div v-if="isEditModalOpen" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm transition-opacity">
-      <div class="w-full max-w-md overflow-hidden rounded-2xl bg-white p-6 shadow-2xl border border-stone-100">
-        <div class="flex items-center justify-between border-b border-stone-100 pb-4">
-          <h3 class="text-lg font-black text-stone-900">Edit Staff Profile</h3>
-          <button @click="closeEditModal" class="rounded-lg p-1 text-stone-400 hover:bg-stone-100">✕</button>
+    <div
+      v-if="isEditModalOpen"
+      class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm transition-opacity"
+    >
+      <div
+        class="w-full max-w-md overflow-hidden rounded-2xl bg-white p-6 shadow-2xl border border-stone-100"
+      >
+        <div
+          class="flex items-center justify-between border-b border-stone-100 pb-4"
+        >
+          <h3 class="text-lg font-black text-stone-900">
+            {{
+              state.language === "en"
+                ? "Edit Staff Profile"
+                : "แก้ไขข้อมูลพนักงาน"
+            }}
+          </h3>
+          <button
+            @click="closeEditModal"
+            class="rounded-lg p-1 text-stone-400 hover:bg-stone-100 cursor-pointer"
+          >
+            ✕
+          </button>
         </div>
 
         <form @submit.prevent="submitEdit" class="mt-4 grid gap-4">
           <div>
-            <label class="block text-xs font-bold text-stone-500 uppercase mb-1">Full Name</label>
-            <input v-model="editingStaff.fullName" class="field" placeholder="Staff Member Name" required />
+            <label
+              class="block text-xs font-bold text-stone-500 uppercase mb-1"
+            >
+              {{ state.language === "en" ? "Full Name" : "ชื่อ-นามสกุล" }}
+            </label>
+            <input
+              v-model="editingStaff.fullName"
+              class="field"
+              :placeholder="
+                state.language === 'en' ? 'Staff Member Name' : 'ชื่อพนักงาน'
+              "
+              required
+            />
           </div>
           <div>
-            <label class="block text-xs font-bold text-stone-500 uppercase mb-1">Email Address</label>
-            <input v-model="editingStaff.email" class="field" placeholder="email@zank.com" type="email" required />
+            <label
+              class="block text-xs font-bold text-stone-500 uppercase mb-1"
+            >
+              {{ state.language === "en" ? "Email Address" : "อีเมล" }}
+            </label>
+            <input
+              v-model="editingStaff.email"
+              class="field"
+              placeholder="email@zank.com"
+              type="email"
+              required
+            />
           </div>
           <div class="border-t border-stone-100 pt-3">
-            <label class="block text-xs font-bold text-stone-500 uppercase mb-1">Override Password (Optional)</label>
-            <input v-model="editingStaff.newPassword" class="field" placeholder="Leave blank to keep current" type="password" />
+            <label
+              class="block text-xs font-bold text-stone-500 uppercase mb-1"
+            >
+              {{
+                state.language === "en"
+                  ? "Override Password (Optional)"
+                  : "เปลี่ยนรหัสผ่านใหม่ (ถ้าต้องการ)"
+              }}
+            </label>
+            <input
+              v-model="editingStaff.newPassword"
+              class="field"
+              :placeholder="
+                state.language === 'en'
+                  ? 'Leave blank to keep current'
+                  : 'เว้นว่างไว้หากไม่ต้องการเปลี่ยน'
+              "
+              type="password"
+            />
           </div>
 
-          <div class="mt-4 flex justify-end gap-2 border-t border-stone-100 pt-4">
-            <button type="button" @click="closeEditModal" class="rounded-lg border border-stone-200 bg-white px-4 py-2 text-sm font-semibold">Cancel</button>
-            <button type="submit" :disabled="isEditingSubmit" class="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white shadow-md">
-              {{ isEditingSubmit ? 'Saving...' : 'Save Changes' }}
+          <div
+            class="mt-4 flex justify-end gap-2 border-t border-stone-100 pt-4"
+          >
+            <button
+              type="button"
+              @click="closeEditModal"
+              class="rounded-lg border border-stone-200 bg-white px-4 py-2 text-sm font-semibold cursor-pointer"
+            >
+              {{ state.language === "en" ? "Cancel" : "ยกเลิก" }}
+            </button>
+            <button
+              type="submit"
+              :disabled="isEditingSubmit"
+              class="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white shadow-md cursor-pointer"
+            >
+              {{
+                isEditingSubmit
+                  ? state.language === "en"
+                    ? "Saving..."
+                    : "กำลังบันทึก..."
+                  : state.language === "en"
+                    ? "Save Changes"
+                    : "บันทึกการเปลี่ยนแปลง"
+              }}
             </button>
           </div>
         </form>

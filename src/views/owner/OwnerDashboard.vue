@@ -1,14 +1,12 @@
 <script setup>
 import { computed, ref, onMounted } from "vue";
-import { useRouter } from "vue-router";
 import SideNav from "../../components/common/SideNav.vue";
 import StatusPill from "../../components/common/StatusPill.vue";
 import TopBar from "../../components/common/TopBar.vue";
 import { useAppState } from "../../services/appState";
 import { supabase } from "../../supabaseClient";
 
-const router = useRouter();
-const { state, signOut } = useAppState();
+const { state } = useAppState();
 
 const dbLiveOrdersCount = ref(0);
 const recentOrders = ref([]);

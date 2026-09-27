@@ -316,6 +316,15 @@ const goToStatus = () => {
   <header
     class="w-full bg-white border-b border-stone-100 px-4 pt-4 pb-3 shadow-[0_2px_10px_rgba(0,0,0,0.03)] no-zoom-touch flex-shrink-0 z-20"
   >
+    <div
+      class="flex flex-col items-center justify-center mb-3"
+    >
+      <img
+        src="/logo/ZANK_LOGO1.png"
+        alt="Zank Logo"
+        class="h-8 object-contain"
+      />
+    </div>
     <h1 class="text-center text-xl font-extrabold text-stone-900 mb-4">
       {{ restaurantName }}
     </h1>
@@ -388,7 +397,7 @@ const goToStatus = () => {
     </div>
 
     <!-- Category (ไม่มีปุ่ม All แล้ว) -->
-    <div class="flex items-center gap-4 pt-1">
+    <div class="flex items-center gap-4">
       <div
         ref="categoryContainer"
         class="flex items-center overflow-x-auto hide-scrollbar py-1 scroll-smooth"
