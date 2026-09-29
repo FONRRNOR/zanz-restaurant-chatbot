@@ -224,8 +224,8 @@ const fetchRestaurantData = async () => {
   }
 };
 
-onMounted(() => {
-  fetchRestaurantData();
+onMounted(async () => {
+  await fetchRestaurantData();
 });
 
 watch(
@@ -264,7 +264,7 @@ const formatMessage = (text) => {
 
   let formatted = text.replace(
     /\*\*(.*?)\*\*/g,
-    '<strong class="text-emerald-700 font-bold">$1</strong>',
+    '<strong class="text-stone-700 font-bold">$1</strong>',
   );
 
   const isIngredientResponse =
@@ -404,30 +404,34 @@ async function sendAiMessage(queryParam = null) {
     let displayItems = Array.isArray(data.items) ? [...data.items] : [];
 
     if (
-      data.action === "CONFIRM_ORDER_ITEMS" &&
-      Array.isArray(data.orderItems) &&
-      data.orderItems.length > 0
+      (data.action === "CONFIRM_ORDER_ITEMS" ||
+        (data.orderItems && data.orderItems.length > 0)) &&
+      Array.isArray(data.orderItems)
     ) {
-      displayItems = displayItems.map((cardItem) => {
-        const matchedOrder = data.orderItems.find(
-          (ord) => String(ord.id || ord.itemId) === String(cardItem.id),
-        );
-        return {
-          ...cardItem,
-          orderQuantity: matchedOrder ? matchedOrder.quantity : null,
-          orderNotes: matchedOrder
-            ? matchedOrder.notes || matchedOrder.note
-            : null,
-        };
-      });
-
       data.orderItems.forEach((orderItem) => {
+        const exactQty = Number(orderItem.quantity) || 1;
+
+        const targetCard = displayItems.find(
+          (di) => String(di.id) === String(orderItem.id || orderItem.itemId),
+        );
+        if (targetCard) {
+          targetCard.quantity = exactQty;
+          targetCard.orderQuantity = exactQty;
+        } else if (displayItems.length > 0) {
+          displayItems.forEach((di) => {
+            if (String(di.id) === String(orderItem.id || orderItem.itemId)) {
+              di.quantity = exactQty;
+              di.orderQuantity = exactQty;
+            }
+          });
+        }
+
         emit("addToCart", {
           id: orderItem.id || orderItem.itemId,
           name: orderItem.name,
           name_th: orderItem.name_th || orderItem.name,
           price: orderItem.price || 0,
-          quantity: orderItem.quantity || 1,
+          quantity: exactQty,
           notes: orderItem.notes || orderItem.note || "",
           image: orderItem.image || "",
         });
@@ -606,6 +610,7 @@ const tableNumber = computed(() => {
 
             <div
               v-else
+              :class="message.role === 'user' ? 'text-white' : ''"
               v-html="formatMessage(getDisplayMessage(message))"
             ></div>
 
@@ -620,60 +625,65 @@ const tableNumber = computed(() => {
                 @click="openItemDetail(item)"
                 class="flex w-full items-center justify-between rounded-2xl bg-stone-50/80 border border-stone-200/60 p-2.5 text-left text-stone-900 hover:bg-emerald-50/60 hover:border-emerald-200 transition-all cursor-pointer group gap-3 relative shadow-xs"
               >
-                <!-- รูปภาพเมนู -->
-                <div
-                  class="w-14 h-14 rounded-xl bg-stone-200 flex-shrink-0 overflow-hidden shadow-xs relative"
-                >
-                  <img
-                    v-if="item.image || item.image_url"
-                    :src="item.image || item.image_url"
-                    class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                  />
+                <!-- ส่วนซ้าย: รูปภาพ + ชื่อ + ราคา -->
+                <div class="flex items-center gap-3 min-w-0 flex-1">
+                  <!-- รูปภาพเมนู -->
                   <div
-                    v-else
-                    class="w-full h-full flex items-center justify-center text-[10px] text-stone-400 font-bold bg-stone-100"
+                    class="w-14 h-14 rounded-xl bg-stone-200 flex-shrink-0 overflow-hidden shadow-xs relative"
                   >
-                    No Img
+                    <img
+                      v-if="item.image || item.image_url"
+                      :src="item.image || item.image_url"
+                      class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                    />
+                    <div
+                      v-else
+                      class="w-full h-full flex items-center justify-center text-[10px] text-stone-400 font-bold bg-stone-100"
+                    >
+                      No Img
+                    </div>
+                  </div>
+
+                  <!-- ข้อมูลชื่อและราคา -->
+                  <div
+                    class="min-w-0 flex-1 flex flex-col justify-center overflow-hidden"
+                  >
+                    <div class="flex items-baseline gap-1.5 overflow-hidden">
+                      <strong
+                        class="text-sm font-bold text-stone-800 group-hover:text-emerald-700 transition-colors truncate"
+                      >
+                        {{ getMenuName(item) }}
+                      </strong>
+                    </div>
+                    <div class="flex items-center gap-2 mt-0.5">
+                      <span class="text-xs font-black text-emerald-600">
+                        {{
+                          (item.price || item.priceNum || 0).toLocaleString()
+                        }}
+                        {{ currentLanguage === "th" ? "บาท" : "Baht" }}
+                      </span>
+                      <span
+                        v-if="
+                          currentLanguage === 'th' &&
+                          item.name &&
+                          item.name_th &&
+                          item.name !== item.name_th
+                        "
+                        class="text-[11px] text-stone-400 truncate"
+                      >
+                        ({{ item.name }})
+                      </span>
+                    </div>
                   </div>
                 </div>
 
-                <!-- ข้อมูลชื่อและราคา -->
+                <!-- 🟢 วงกลมบอกจำนวนสีดำ จัดให้อยู่ตรงกลางพอดี -->
                 <div
-                  class="min-w-0 flex-1 flex flex-col justify-center overflow-hidden"
+                  v-if="item.quantity > 0 || item.orderQuantity > 0"
+                  class="flex-shrink-0 flex items-center justify-center w-6 h-6 rounded-full bg-black text-white font-bold text-xs ml-2 text-center leading-none"
+                  :title="`จำนวน ${item.quantity || item.orderQuantity} ที่`"
                 >
-                  <div class="flex items-baseline gap-1.5 overflow-hidden">
-                    <strong
-                      class="text-sm font-bold text-stone-800 group-hover:text-emerald-700 transition-colors truncate"
-                    >
-                      {{ getMenuName(item) }}
-                    </strong>
-                  </div>
-                  <div class="flex items-center gap-2 mt-0.5">
-                    <span class="text-xs font-black text-emerald-600">
-                      {{ (item.price || item.priceNum || 0).toLocaleString() }}
-                      {{ currentLanguage === "th" ? "บาท" : "Baht" }}
-                    </span>
-                    <span
-                      v-if="
-                        currentLanguage === 'th' &&
-                        item.name &&
-                        item.name_th &&
-                        item.name !== item.name_th
-                      "
-                      class="text-[11px] text-stone-400 truncate"
-                    >
-                      ({{ item.name }})
-                    </span>
-                  </div>
-                </div>
-
-                <!-- Quantity Badge -->
-                <div
-                  v-if="item.orderQuantity"
-                  class="flex-shrink-0 flex items-center justify-center w-7 h-7 rounded-full bg-emerald-600 text-white font-bold text-xs shadow-md shadow-emerald-600/20 ring-2 ring-white"
-                  :title="`จำนวน ${item.orderQuantity} ที่`"
-                >
-                  {{ item.orderQuantity }}
+                  {{ item.quantity || item.orderQuantity }}
                 </div>
               </div>
             </div>
@@ -682,14 +692,14 @@ const tableNumber = computed(() => {
           <div ref="messagesEndRef"></div>
         </div>
 
-        <!-- Quick Suggestion Buttons -->
+        <!-- Quick Suggestion Buttons (ปรับลดความสูงและเพิ่ม padding ด้านข้าง) -->
         <div
-          class="p-2.5 bg-white border-t border-stone-100 flex gap-1.5 overflow-x-auto no-scrollbar shadow-xs"
+          class="px-2 py-1.5 bg-white border-t border-stone-100 flex gap-1.5 overflow-x-auto no-scrollbar shadow-xs shrink-0"
         >
           <button
             v-for="item in activeSuggestions"
             :key="item.id"
-            class="whitespace-nowrap px-4 py-2 bg-stone-100/80 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-200 border border-transparent rounded-xl text-stone-600 text-xs font-bold transition-all cursor-pointer shrink-0 disabled:opacity-50 active:scale-95 shadow-2xs"
+            class="whitespace-nowrap px-5 py-1 bg-stone-100/80 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-200 border border-transparent rounded-full text-stone-600 text-xs font-bold transition-all cursor-pointer shrink-0 disabled:opacity-50 active:scale-95 shadow-2xs"
             :disabled="isLoading"
             @click="sendAiMessage(item)"
           >
@@ -699,7 +709,7 @@ const tableNumber = computed(() => {
 
         <!-- Input Bar -->
         <form
-          class="p-3 bg-white border-t border-stone-100 flex items-center gap-2"
+          class="p-3 bg-white border-t border-stone-100 flex items-center gap-2 shrink-0"
           @submit.prevent="sendAiMessage()"
         >
           <input
@@ -799,6 +809,60 @@ const tableNumber = computed(() => {
               >
                 {{ getMenuDescription(selectedItem) }}
               </p>
+            </div>
+
+            <!-- ระดับความเผ็ด -->
+            <div
+              v-if="
+                selectedItem.spice_level !== undefined &&
+                selectedItem.spice_level !== null
+              "
+              class="border-t border-stone-100 pt-3 text-xs flex items-center justify-between gap-2 overflow-visible"
+            >
+              <div class="flex items-center gap-1.5 whitespace-nowrap min-w-0">
+                <span class="font-medium text-stone-500 shrink-0">
+                  {{
+                    currentLanguage === "th" ? "ระดับความเผ็ด:" : "Spiciness:"
+                  }}
+                </span>
+                <span class="font-bold text-stone-800 whitespace-nowrap">
+                  {{
+                    Number(selectedItem.spice_level) === 0
+                      ? currentLanguage === "th"
+                        ? "ไม่เผ็ด (Level 0)"
+                        : "Non-spicy (Level 0)"
+                      : Number(selectedItem.spice_level) === 1
+                        ? currentLanguage === "th"
+                          ? "เผ็ดน้อย (Level 1)"
+                          : "Mild (Level 1)"
+                        : Number(selectedItem.spice_level) === 2
+                          ? currentLanguage === "th"
+                            ? "เผ็ดปานกลาง (Level 2)"
+                            : "Medium (Level 2)"
+                          : Number(selectedItem.spice_level) === 3
+                            ? currentLanguage === "th"
+                              ? "เผ็ดมาก (Level 3)"
+                              : "Hot (Level 3)"
+                            : Number(selectedItem.spice_level) === 4
+                              ? currentLanguage === "th"
+                                ? "เผ็ดจัด (Level 4)"
+                                : "Extra Hot (Level 4)"
+                              : currentLanguage === "th"
+                                ? "เผ็ดสุดขีด (Level 5)"
+                                : "Extreme (Level 5)"
+                  }}
+                </span>
+              </div>
+
+              <div
+                class="relative w-32 h-6 flex items-center justify-end shrink-0"
+              >
+                <img
+                  :src="`/spice-levels/level-${Number(selectedItem.spice_level) || 0}.png`"
+                  :alt="`Spice level ${selectedItem.spice_level}`"
+                  class="h-5 w-auto object-contain transform scale-[2.8] origin-right pointer-events-none drop-shadow-xs"
+                />
+              </div>
             </div>
 
             <div

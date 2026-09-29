@@ -16,7 +16,7 @@ import {
   QrCode,
 } from "@lucide/vue";
 
-import { ref, computed, onMounted } from "vue";
+import { ref, computed, onMounted, onUnmounted } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { useAppState } from "../../services/appState";
 import { supabase } from "../../supabaseClient";
@@ -34,6 +34,10 @@ const { state, cartItems, t, signOut } = useAppState();
 const showLogoutModal = ref(false);
 const pendingOrdersCount = ref(0); // เก็บจำนวนออเดอร์ที่รอจัดการ
 
+// ตัวแปรสำหรับ Realtime Subscription และ Polling
+let ordersSubscription = null;
+let pollTimer = null;
+
 const totalCartCount = computed(() => {
   const cart = state.cart || [];
   return cart.reduce((total, item) => total + (item.quantity || 0), 0);
@@ -42,14 +46,14 @@ const totalCartCount = computed(() => {
 // ฟังก์ชันดึงจำนวนออเดอร์ที่ค้างอยู่จาก Supabase (สำหรับ Admin / Staff)
 async function fetchPendingOrdersCount() {
   try {
-    // เช็คก่อนว่าอยู่หน้าแดชบอร์ด/ระบบหลังบ้านหรือไม่ (เพื่อประหยัดการเรียกข้อมูลถ้าเป็นลูกค้า)
-    if (route.path.startsWith('/customer/')) return;
+    // เช็คก่อนว่าอยู่หน้าแดชบอร์ด/ระบบหลังบ้านหรือไม่
+    if (route.path.startsWith("/customer/")) return;
 
-    // ตัวอย่าง: ดึงออเดอร์ที่มีสถานะรอดำเนินการหรือกำลังทำอยู่ (ปรับเปลี่ยนสถานะตามตารางฐานข้อมูลจริงของคุณได้ครับ)
+    // ดึงออเดอร์ที่ยังไม่เสร็จ (เพิ่ม 'new' เข้าไปด้วยเพื่อให้นับออเดอร์ใหม่ทันที)
     const { count, error } = await supabase
-      .from('orders') // ชื่อตารางออเดอร์ใน Supabase ของคุณ
-      .select('*', { count: 'exact', head: true })
-     .in('status', ['preparing', 'ready', 'pending']); // ดักจับสถานะที่ยังไม่เสร็จ
+      .from("orders")
+      .select("*", { count: "exact", head: true })
+      .in("status", ["new", "preparing", "ready", "pending"]);
 
     if (!error && count !== null) {
       pendingOrdersCount.value = count;
@@ -57,6 +61,27 @@ async function fetchPendingOrdersCount() {
   } catch (err) {
     console.error("Error fetching pending orders count:", err);
   }
+}
+
+// ตั้งค่า Supabase Realtime เพื่อดักจับทุกการ Insert, Update, Delete บนตาราง orders
+function setupRealtimeOrders() {
+  if (route.path.startsWith("/customer/")) return;
+
+  ordersSubscription = supabase
+    .channel("public:orders-count-sync")
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "orders",
+      },
+      () => {
+        // เมื่อมีออเดอร์ใหม่ หรือออเดอร์เปลี่ยนสถานะ/ถูกลบ ให้คำนวณตัวเลขใหม่ทันที
+        fetchPendingOrdersCount();
+      },
+    )
+    .subscribe();
 }
 
 // กำหนดไอคอนให้ครอบคลุมชื่อกลุ่ม
@@ -109,13 +134,26 @@ function isCustomerItemActive(item) {
 
 onMounted(() => {
   fetchPendingOrdersCount();
-  // สามารถทำ Realtime หรือ Interval สั้นๆ คอยเช็คออเดอร์ใหม่ได้ถ้าต้องการ
+  setupRealtimeOrders();
+
+  // Polling สำรองทุกๆ 10 วินาที
+  pollTimer = setInterval(fetchPendingOrdersCount, 10000);
+});
+
+onUnmounted(() => {
+  // ล้างการเชื่อมต่อเมื่อเปลี่ยนหน้าเพื่อกัน memory leak
+  if (ordersSubscription) {
+    supabase.removeChannel(ordersSubscription);
+  }
+  if (pollTimer) {
+    clearInterval(pollTimer);
+  }
 });
 </script>
 
 <template>
   <aside
-    class="sticky top-20 hidden w-64 shrink-0 flex-col justify-between rounded-r-3xl bg-white p-5 shadow-soft h-[calc(100vh-5rem)] lg:flex"
+    class="sticky top-20 hidden w-64 shrink-0 flex-col justify-between rounded-r-3xl bg-white p-5 shadow-soft h-[calc(100dvh-5rem)] min-h-[calc(100dvh-5rem)] self-stretch lg:flex"
   >
     <div class="flex-1 overflow-y-auto pr-1 space-y-2 custom-scrollbar">
       <RouterLink
@@ -182,9 +220,14 @@ onMounted(() => {
             </span>
           </div>
 
-          <!-- ฝั่งขวา: Badge แสดงตัวเลขจำนวนออเดอร์ (แสดงเฉพาะเมนู Orders หรือ ออเดอร์สด) -->
+          <!-- ฝั่งขวา: Badge แสดงตัวเลขจำนวนออเดอร์ -->
           <span
-            v-if="(item.label === 'Orders' || item.label === 'Live Orders' || item.label === 'ออเดอร์สด') && pendingOrdersCount > 0"
+            v-if="
+              (item.label === 'Orders' ||
+                item.label === 'Live Orders' ||
+                item.label === 'ออเดอร์สด') &&
+              pendingOrdersCount > 0
+            "
             class="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-red-500 px-1.5 text-[10px] font-black text-white shadow-xs animate-pulse"
           >
             {{ pendingOrdersCount }}
@@ -240,7 +283,9 @@ onMounted(() => {
           class="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl animate-in fade-in zoom-in-95 duration-150 relative z-10"
         >
           <h2 class="text-lg font-black text-red-600">
-            {{ state.language === "en" ? "Confirm Logout" : "ยืนยันออกจากระบบ" }}
+            {{
+              state.language === "en" ? "Confirm Logout" : "ยืนยันออกจากระบบ"
+            }}
           </h2>
           <p class="mt-3 text-sm text-stone-600 leading-relaxed">
             {{

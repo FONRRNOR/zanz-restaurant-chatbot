@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from "vue";
-import { X, ChevronDown } from "@lucide/vue";
+import { X, ChevronDown, Bot, Sparkles, ArrowRight } from "@lucide/vue";
 
 const props = defineProps({
   isOpen: Boolean,
@@ -10,12 +10,15 @@ const props = defineProps({
   },
 });
 
-const emit = defineEmits(["save", "skip"]);
+const emit = defineEmits(["save", "skip", "reset", "open-chatbot"]);
 
+const isResetting = ref(false);
+
+// ค่าเริ่มต้นแบบไม่มีการกรอง (Clear/Empty State)
 const defaultPreferences = {
   diets: [],
   allergies: [],
-  spiceLevel: 3,
+  spiceLevel: 3, // 3 = เผ็ดมาก/ทานได้ทุกระดับ (ไม่ติดเงื่อนไขกรองความเผ็ด)
 };
 
 const userPreferences = ref({ ...defaultPreferences });
@@ -28,13 +31,24 @@ watch(
       if (val) {
         document.body.style.overflow = "hidden";
         document.body.style.touchAction = "none";
+
+        const saved = sessionStorage.getItem("customer_preferences");
+        if (saved) {
+          try {
+            userPreferences.value = JSON.parse(saved);
+          } catch {
+            userPreferences.value = { ...defaultPreferences };
+          }
+        } else {
+          userPreferences.value = { ...defaultPreferences };
+        }
       } else {
         document.body.style.overflow = "";
         document.body.style.touchAction = "";
       }
     }
   },
-  { immediate: true }
+  { immediate: true },
 );
 
 onUnmounted(() => {
@@ -116,7 +130,7 @@ const dietSuggestions = computed(() => {
   if (!query) return [];
   return masterDiets.filter((item) => {
     const isSelected = userPreferences.value.diets.some(
-      (d) => d.toLowerCase() === item.en.toLowerCase()
+      (d) => d.toLowerCase() === item.en.toLowerCase(),
     );
     if (isSelected) return false;
     return (
@@ -131,7 +145,7 @@ const allergySuggestions = computed(() => {
   if (!query) return [];
   return masterAllergies.filter((item) => {
     const isSelected = userPreferences.value.allergies.some(
-      (a) => a.toLowerCase() === item.en.toLowerCase()
+      (a) => a.toLowerCase() === item.en.toLowerCase(),
     );
     if (isSelected) return false;
     return (
@@ -153,11 +167,21 @@ const handleAllergyBlur = () => {
   }, 250);
 };
 
+// มีการเลือกหรือตั้งค่าฟิลเตอร์ใดๆ ไว้หรือไม่ (ใช้แสดงปุ่ม Reset)
 const hasActivePreferences = computed(() => {
   return (
     userPreferences.value.diets.length > 0 ||
+    dietInput.value.trim().length > 0 ||
     userPreferences.value.allergies.length > 0 ||
+    allergyInput.value.trim().length > 0 ||
     userPreferences.value.spiceLevel !== 3
+  );
+});
+
+// เงื่อนไขแสดงปุ่ม "บันทึกและดูเมนู": ต้องมี Tag ใน diets หรือกำลังพิมพ์ค้างอยู่ในช่อง diet
+const canApplyFilters = computed(() => {
+  return (
+    userPreferences.value.diets.length > 0 || dietInput.value.trim().length > 0
   );
 });
 
@@ -176,7 +200,7 @@ const addDiet = (val) => {
   const text = (val || dietInput.value).trim();
   if (text) {
     const isExist = userPreferences.value.diets.some(
-      (d) => d.toLowerCase() === text.toLowerCase()
+      (d) => d.toLowerCase() === text.toLowerCase(),
     );
     if (!isExist) {
       userPreferences.value.diets.push(text);
@@ -199,7 +223,7 @@ const addAllergy = (val) => {
   const text = (val || allergyInput.value).trim();
   if (text) {
     const isExist = userPreferences.value.allergies.some(
-      (a) => a.toLowerCase() === text.toLowerCase()
+      (a) => a.toLowerCase() === text.toLowerCase(),
     );
     if (!isExist) {
       userPreferences.value.allergies.push(text);
@@ -218,7 +242,14 @@ const removeAllergy = (index) => {
   });
 };
 
-const resetAll = () => {
+const resetAll = (e) => {
+  if (e) {
+    e.stopPropagation();
+    e.preventDefault();
+  }
+  isResetting.value = true;
+  console.log("[RecommendationModal] >>> Reset button clicked in modal <<<");
+
   userPreferences.value = {
     diets: [],
     allergies: [],
@@ -227,24 +258,65 @@ const resetAll = () => {
   dietInput.value = "";
   allergyInput.value = "";
   activeSection.value = null;
+
+  sessionStorage.removeItem("customer_preferences");
+
+  emit("reset");
+
+  // ป้องกัน event อื่นที่อาจจะยิงตามมาจากการปล่อยเมาส์หรือคลิกผ่าน
+  setTimeout(() => {
+    isResetting.value = false;
+  }, 500);
 };
 
-const handleSave = () => {
+const handleSave = (e) => {
+  if (e) {
+    e.stopPropagation();
+    e.preventDefault();
+  }
+
+  // ถ้ากำลังอยู่ในช่วงกด Reset ให้ตัดทิ้งทันที
+  if (isResetting.value) {
+    console.warn(
+      "[RecommendationModal] Blocked save call because isResetting is true",
+    );
+    return;
+  }
+
   if (dietInput.value.trim()) addDiet();
   if (allergyInput.value.trim()) addAllergy();
+
   sessionStorage.setItem(
     "customer_preferences",
-    JSON.stringify(userPreferences.value)
+    JSON.stringify(userPreferences.value),
   );
   emit("save", userPreferences.value);
 };
 
-const handleSkip = () => {
-  sessionStorage.setItem(
-    "customer_preferences",
-    JSON.stringify(defaultPreferences)
-  );
-  emit("skip", defaultPreferences);
+const handleSkip = (e) => {
+  if (e) {
+    e.stopPropagation();
+    e.preventDefault();
+  }
+
+  // ป้องกันไม่ให้ทำงานถ้าเพิ่งกด Reset
+  if (isResetting.value) {
+    console.warn(
+      "[RecommendationModal] Blocked skip call because isResetting is true",
+    );
+    return;
+  }
+
+  // ลบค่าฟิลเตอร์ออกจาก Storage ไปเลย (ไม่บันทึก defaultPreferences ทับ)
+  sessionStorage.removeItem("customer_preferences");
+
+  // ยิง event 'skip' เปล่าๆ ออกไป ไม่ต้องส่ง payload
+  emit("skip");
+};
+
+const handleOpenChatbot = () => {
+  console.log("[RecommendationModal] Emitting open-chatbot event");
+  emit("open-chatbot");
 };
 </script>
 
@@ -255,7 +327,7 @@ const handleSkip = () => {
     @wheel.stop
     @touchmove.stop
   >
-    <!-- Modal Card (กำหนดความสูง h-[85vh] แน่นอน เพื่อไม่ให้ขยายดันหน้าข้างนอก) -->
+    <!-- Modal Card -->
     <div
       class="bg-white rounded-3xl w-full max-w-xl h-[85vh] flex flex-col border border-stone-200 shadow-2xl overflow-hidden isolation-auto"
     >
@@ -279,32 +351,37 @@ const handleSkip = () => {
         </div>
 
         <div class="flex items-center gap-3">
+          <!-- ใช้ visibility ซ่อนแทนการขยับ Layout -->
           <button
-            v-if="hasActivePreferences"
             type="button"
-            @click="resetAll"
-            class="text-sm font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 px-4 py-2 rounded-full transition"
+            @click.stop.prevent="resetAll"
+            :class="[
+              'text-sm font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 px-4 py-2 rounded-full transition cursor-pointer',
+              hasActivePreferences
+                ? 'opacity-100 pointer-events-auto'
+                : 'opacity-0 pointer-events-none',
+            ]"
           >
             {{ language === "en" ? "Reset" : "ล้างค่า" }}
           </button>
 
           <button
             type="button"
-            @click="handleSkip"
-            class="text-stone-600 hover:text-stone-800 text-sm font-bold bg-stone-100 hover:bg-stone-200 px-4 py-2 rounded-full transition"
+            @click.stop.prevent="handleSkip"
+            class="text-stone-600 hover:text-stone-800 text-sm font-bold bg-stone-100 hover:bg-stone-200 px-4 py-2 rounded-full transition cursor-pointer"
           >
             {{ language === "en" ? "Skip" : "ข้าม" }}
           </button>
         </div>
       </div>
 
-      <!-- Accordion Body: ทุกอย่างขยายและเลื่อนอยู่เฉพาะกล่องนี้ -->
+      <!-- Accordion Body -->
       <div
         class="p-6 overflow-y-auto flex-1 space-y-4 native-scroll bg-stone-50/40 overscroll-contain"
         @wheel.stop
         @touchmove.stop
       >
-        <!-- Accordion 1: รูปแบบอาหาร (Diets) โทนเขียว -->
+        <!-- Accordion 1: รูปแบบอาหาร (Diets) -->
         <div
           class="rounded-2xl border shadow-sm transition-all duration-300 relative z-20"
           :class="
@@ -316,15 +393,17 @@ const handleSkip = () => {
           <button
             type="button"
             @click="toggleSection('diet')"
-            class="w-full px-6 py-5 flex items-center justify-between transition text-left"
+            class="w-full px-6 py-5 flex items-center justify-between transition text-left cursor-pointer"
           >
             <div>
-              <h3 class="text-base sm:text-lg font-black text-emerald-950">
-                {{
+              <h3
+                class="text-base sm:text-lg font-black text-emerald-950 flex items-center gap-2"
+              >
+                <span>{{
                   language === "en"
                     ? "Dietary Preferences"
                     : "รูปแบบอาหารที่คุณทาน"
-                }}
+                }}</span>
               </h3>
               <p class="text-sm text-emerald-800/80 mt-1">
                 <span
@@ -368,14 +447,11 @@ const handleSkip = () => {
                   }}
                 </p>
 
-                <!-- Container ครอบ Input และ Suggestion -->
                 <div class="relative">
-                  <!-- กล่อง Tags ด้านในช่องกรอก -->
                   <div
                     @click="dietInputRef?.focus()"
                     class="flex flex-wrap items-center gap-2 p-2.5 bg-white border border-emerald-200 rounded-2xl focus-within:border-emerald-600 focus-within:ring-2 focus-within:ring-emerald-500/20 transition min-h-[52px] cursor-text shadow-sm"
                   >
-                    <!-- Tag Pills -->
                     <span
                       v-for="(diet, index) in userPreferences.diets"
                       :key="'diet-' + index"
@@ -385,13 +461,12 @@ const handleSkip = () => {
                       <button
                         type="button"
                         @click.stop="removeDiet(index)"
-                        class="hover:bg-emerald-700 rounded-full p-0.5 transition"
+                        class="hover:bg-emerald-700 rounded-full p-0.5 transition cursor-pointer"
                       >
                         <X :size="14" />
                       </button>
                     </span>
 
-                    <!-- Input -->
                     <div class="flex-1 min-w-[140px] flex items-center">
                       <input
                         ref="dietInputRef"
@@ -415,7 +490,6 @@ const handleSkip = () => {
                     </div>
                   </div>
 
-                  <!-- Dropdown Suggestion โทนเขียว -->
                   <div
                     v-if="isDietFocused && dietSuggestions.length > 0"
                     class="absolute left-0 right-0 top-full mt-2 bg-white border-2 border-emerald-300 rounded-2xl shadow-2xl z-50 overflow-hidden divide-y divide-emerald-50"
@@ -426,9 +500,9 @@ const handleSkip = () => {
                       @mousedown.prevent="addDiet(sug.en)"
                       class="px-5 py-3.5 text-sm flex items-center justify-between hover:bg-emerald-100/70 cursor-pointer transition"
                     >
-                      <span class="font-bold text-emerald-950 text-base">{{
-                        language === "th" ? sug.th : sug.en
-                      }}</span>
+                      <span class="font-bold text-emerald-950 text-base">
+                        {{ language === "th" ? sug.th : sug.en }}
+                      </span>
                       <span
                         class="text-emerald-800 font-bold text-xs bg-emerald-100 px-2.5 py-1 rounded-lg border border-emerald-300"
                       >
@@ -442,7 +516,7 @@ const handleSkip = () => {
           </Transition>
         </div>
 
-        <!-- Accordion 2: การแพ้อาหาร (Allergies) โทนเหลือง -->
+        <!-- Accordion 2: การแพ้อาหาร (Allergies) -->
         <div
           class="rounded-2xl border shadow-sm transition-all duration-300 relative z-10"
           :class="
@@ -454,7 +528,7 @@ const handleSkip = () => {
           <button
             type="button"
             @click="toggleSection('allergy')"
-            class="w-full px-6 py-5 flex items-center justify-between transition text-left"
+            class="w-full px-6 py-5 flex items-center justify-between transition text-left cursor-pointer"
           >
             <div>
               <h3 class="text-base sm:text-lg font-black text-amber-950">
@@ -506,14 +580,11 @@ const handleSkip = () => {
                   }}
                 </p>
 
-                <!-- Container ครอบ Input และ Suggestion -->
                 <div class="relative">
-                  <!-- กล่อง Tag ด้านในช่องกรอก -->
                   <div
                     @click="allergyInputRef?.focus()"
                     class="flex flex-wrap items-center gap-2 p-2.5 bg-white border border-amber-200 rounded-2xl focus-within:border-amber-500 focus-within:ring-2 focus-within:ring-amber-500/20 transition min-h-[54px] cursor-text shadow-sm"
                   >
-                    <!-- Tag Pills -->
                     <span
                       v-for="(allergy, index) in userPreferences.allergies"
                       :key="'allergy-' + index"
@@ -523,13 +594,12 @@ const handleSkip = () => {
                       <button
                         type="button"
                         @click.stop="removeAllergy(index)"
-                        class="hover:bg-amber-600/40 rounded-full p-0.5 transition text-stone-900"
+                        class="hover:bg-amber-600/40 rounded-full p-0.5 transition text-stone-900 cursor-pointer"
                       >
                         <X :size="14" />
                       </button>
                     </span>
 
-                    <!-- Input -->
                     <div class="flex-1 min-w-[140px] flex items-center">
                       <input
                         ref="allergyInputRef"
@@ -553,7 +623,6 @@ const handleSkip = () => {
                     </div>
                   </div>
 
-                  <!-- Dropdown Suggestion โทนเหลือง -->
                   <div
                     v-if="isAllergyFocused && allergySuggestions.length > 0"
                     class="absolute left-0 right-0 top-full mt-2 bg-white border-2 border-amber-300 rounded-2xl shadow-2xl z-50 overflow-hidden divide-y divide-amber-50"
@@ -580,7 +649,7 @@ const handleSkip = () => {
           </Transition>
         </div>
 
-        <!-- Accordion 3: ระดับความเผ็ด (Spice Tolerance) โทนส้ม -->
+        <!-- Accordion 3: ระดับความเผ็ด (Spice Tolerance) -->
         <div
           class="rounded-2xl border shadow-sm transition-all duration-300 relative z-0"
           :class="
@@ -592,7 +661,7 @@ const handleSkip = () => {
           <button
             type="button"
             @click="toggleSection('spice')"
-            class="w-full px-6 py-5 flex items-center justify-between transition text-left"
+            class="w-full px-6 py-5 flex items-center justify-between transition text-left cursor-pointer"
           >
             <div>
               <h3 class="text-base sm:text-lg font-black text-orange-950">
@@ -636,7 +705,7 @@ const handleSkip = () => {
                     :key="level.val"
                     type="button"
                     @click="userPreferences.spiceLevel = level.val"
-                    class="py-3 text-sm font-black rounded-xl text-center transition duration-200"
+                    class="py-3 text-sm font-black rounded-xl text-center transition duration-200 cursor-pointer"
                     :class="
                       userPreferences.spiceLevel === level.val
                         ? 'bg-white text-orange-700 shadow-sm border border-orange-200'
@@ -650,6 +719,63 @@ const handleSkip = () => {
             </div>
           </Transition>
         </div>
+
+        <!-- Divider คั่นกลาง -->
+        <div class="relative py-4 flex items-center justify-center">
+          <div class="w-full border-t-2 border-dashed border-stone-200"></div>
+          <span
+            class="absolute bg-white px-4 py-1 rounded-full border-2 border-stone-200 text-xs font-black uppercase tracking-wider text-stone-500 shadow-xs"
+          >
+            {{ language === "en" ? "OR" : "หรือ" }}
+          </span>
+        </div>
+
+        <!-- AI Chatbot Section -->
+        <div class="text-center px-4 pb-2 pt-1 flex flex-col items-center">
+          <div class="inline-flex items-center gap-1.5">
+            <h4
+              class="text-base sm:text-lg font-black text-stone-900 tracking-tight"
+            >
+              {{
+                language === "en"
+                  ? "Still not sure what to eat?"
+                  : "เลือกไม่ถูก หรือยังไม่แน่ใจ?"
+              }}
+            </h4>
+          </div>
+
+          <p class="text-sm text-stone-500 mt-1 max-w-sm leading-relaxed">
+            {{
+              language === "en"
+                ? "Let our intelligent AI Chatbot recommend the best matches for you in seconds."
+                : "ให้ AI Chatbot ช่วยคิด ค้นหา และแนะนำเมนูเด็ดที่เหมาะกับคุณที่สุดได้ทันที"
+            }}
+          </p>
+
+          <div class="mt-4 w-full sm:w-auto">
+            <button
+              type="button"
+              @click="handleOpenChatbot"
+              class="group relative inline-flex items-center justify-center gap-2.5 w-full sm:w-auto px-7 py-3.5 rounded-2xl font-black text-white text-base bg-gradient-to-r from-indigo-600 via-violet-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 shadow-lg shadow-indigo-500/25 hover:shadow-indigo-500/40 hover:-translate-y-0.5 active:translate-y-0 active:scale-95 transition-all duration-200 cursor-pointer"
+            >
+              <Bot
+                :size="20"
+                class="transition-transform group-hover:scale-110"
+              />
+              <span>
+                {{
+                  language === "en"
+                    ? "Chat with AI Assistant"
+                    : "คุยกับ AI Chatbot เลย"
+                }}
+              </span>
+              <ArrowRight
+                :size="18"
+                class="transition-transform duration-200 group-hover:translate-x-1"
+              />
+            </button>
+          </div>
+        </div>
       </div>
 
       <!-- Footer Actions -->
@@ -658,15 +784,18 @@ const handleSkip = () => {
       >
         <button
           type="button"
-          @click="handleSkip"
-          class="px-6 py-3 rounded-2xl text-base font-bold text-stone-600 bg-stone-100 hover:bg-stone-200 transition"
+          @click.stop.prevent="handleSkip"
+          class="px-6 py-3 rounded-2xl text-base font-bold text-stone-600 bg-stone-100 hover:bg-stone-200 transition cursor-pointer"
         >
           {{ language === "en" ? "Cancel" : "ยกเลิก" }}
         </button>
+
+        <!-- ซ่อนปุ่มนี้ถ้ายังไม่ได้กรอกส่วน Dietary (canApplyFilters === false) -->
         <button
+          v-if="canApplyFilters"
           type="button"
-          @click="handleSave"
-          class="px-7 py-3 rounded-2xl text-base font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm transition active:scale-95"
+          @click.stop.prevent="handleSave"
+          class="px-7 py-3 rounded-2xl text-base font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm transition active:scale-95 cursor-pointer animate-in fade-in zoom-in-95 duration-200"
         >
           {{ language === "en" ? "Apply Filters" : "บันทึกและดูเมนู" }}
         </button>
