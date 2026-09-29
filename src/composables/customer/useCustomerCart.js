@@ -6,25 +6,28 @@ export function useCustomerCart(state) {
   const router = useRouter();
   const route = useRoute();
 
-  // ==========================================
-  // 1. State Declarations
-  // ==========================================
   const isSubmitting = ref(false);
   const showDeleteModal = ref(false);
   const itemToDelete = ref(null);
-
   const itemNotes = ref({});
   const showNoteInput = ref({});
-
   const showSuccessModal = ref(false);
   const successOrderCode = ref("");
 
-  // ==========================================
-  // 2. Computed Properties
-  // ==========================================
-  const currencyUnit = computed(() => {
-    return state.language === "th" ? "บาท." : "Baht.";
-  });
+  const getResId = () =>
+    route.query.restaurantId ||
+    sessionStorage.getItem("customer_restaurant_id");
+  const getTabId = () => {
+    const sessionTab = sessionStorage.getItem("customer_table_id");
+    const urlTab = route.query.tableId;
+    if (sessionTab && urlTab && sessionTab.startsWith(urlTab))
+      return sessionTab;
+    return sessionTab || urlTab;
+  };
+
+  const currencyUnit = computed(() =>
+    state.language === "th" ? "บาท." : "Baht.",
+  );
 
   const getGroupKey = (item) => {
     const noteStr = (item.notes || item.note || "").trim();
@@ -34,23 +37,16 @@ export function useCustomerCart(state) {
   const groupedCartItems = computed(() => {
     if (!state.cart) return [];
     const groups = {};
-
     state.cart.forEach((item) => {
       const key = getGroupKey(item);
       const itemQty = Number(item.quantity) || 1;
       const itemNote = (item.notes || item.note || "").trim();
 
       if (!groups[key]) {
-        groups[key] = {
-          ...item,
-          groupKey: key,
-          notes: itemNote,
-          quantity: 0,
-        };
+        groups[key] = { ...item, groupKey: key, notes: itemNote, quantity: 0 };
       }
       groups[key].quantity += itemQty;
     });
-
     return Object.values(groups);
   });
 
@@ -66,12 +62,9 @@ export function useCustomerCart(state) {
   const serviceFee = computed(() => 0);
   const total = computed(() => subtotal.value + serviceFee.value);
 
-  // ==========================================
-  // 3. Lifecycle & Watchers
-  // ==========================================
   onMounted(() => {
-    const resId = route.query.restaurantId;
-    const tabId = route.query.tableId;
+    const resId = getResId();
+    const tabId = getTabId();
 
     if (resId && tabId) {
       const savedCart = sessionStorage.getItem(`cart_${resId}_${tabId}`);
@@ -88,7 +81,6 @@ export function useCustomerCart(state) {
         try {
           const parsedNotes = JSON.parse(savedNotes);
           itemNotes.value = parsedNotes;
-
           Object.keys(parsedNotes).forEach((key) => {
             if (parsedNotes[key] && parsedNotes[key].trim() !== "") {
               showNoteInput.value[key] = true;
@@ -114,8 +106,8 @@ export function useCustomerCart(state) {
   watch(
     () => state.cart,
     (newCart) => {
-      const resId = route.query.restaurantId;
-      const tabId = route.query.tableId;
+      const resId = getResId();
+      const tabId = getTabId();
       if (resId && tabId && newCart) {
         sessionStorage.setItem(
           `cart_${resId}_${tabId}`,
@@ -129,8 +121,8 @@ export function useCustomerCart(state) {
   watch(
     itemNotes,
     (newNotes) => {
-      const resId = route.query.restaurantId;
-      const tabId = route.query.tableId;
+      const resId = getResId();
+      const tabId = getTabId();
       if (resId && tabId) {
         sessionStorage.setItem(
           `notes_${resId}_${tabId}`,
@@ -141,19 +133,33 @@ export function useCustomerCart(state) {
     { deep: true },
   );
 
-  // ==========================================
-  // 4. Methods
-  // ==========================================
   const toggleNoteInput = (key) => {
     showNoteInput.value[key] = !showNoteInput.value[key];
   };
 
   const goBackToMenu = () => {
+    const resId =
+      getResId() ||
+      route.query.restaurantId ||
+      sessionStorage.getItem("customer_restaurant_id");
+    const tabId =
+      getTabId() ||
+      route.query.tableId ||
+      sessionStorage.getItem("customer_table_id");
+
+    // บันทึกสำรองตะกร้าลง sessionStorage ไว้ก่อนเปลี่ยนหน้าเสมอ
+    if (resId && tabId && state.cart) {
+      const cartData = JSON.stringify(state.cart);
+      sessionStorage.setItem(`cart_${resId}_${tabId}`, cartData);
+      sessionStorage.setItem(`cart_${resId}`, cartData);
+    }
+
+    // ย้อนกลับพร้อมแนบ Query Parameters ให้ครบถ้วน
     router.push({
       path: "/customer/menu/mobile",
       query: {
-        restaurantId: route.query.restaurantId,
-        tableId: route.query.tableId,
+        restaurantId: resId,
+        tableId: tabId,
       },
     });
   };
@@ -177,7 +183,6 @@ export function useCustomerCart(state) {
         (sum, c) => sum + (Number(c.quantity) || 1),
         0,
       );
-
       if (totalQty <= 1) {
         itemToDelete.value = item;
         showDeleteModal.value = true;
@@ -226,19 +231,18 @@ export function useCustomerCart(state) {
 
   const submitOrder = async () => {
     if (!state.cart || state.cart.length === 0) return;
-
     isSubmitting.value = true;
 
     try {
-      const restaurantId = route.query.restaurantId;
-      const tableId = route.query.tableId;
+      const resId = getResId();
+      const tabId = getTabId();
 
       const { data: orderData, error: orderError } = await supabase
         .from("orders")
         .insert({
-          table_number: tableId,
+          table_number: tabId,
           total_price: total.value,
-          restaurant_id: restaurantId,
+          restaurant_id: resId,
           status: "pending",
         })
         .select("id, order_code")
@@ -249,7 +253,6 @@ export function useCustomerCart(state) {
       const orderItems = groupedCartItems.value.map((item) => {
         const targetKey = item.groupKey || getGroupKey(item);
         const finalNote = itemNotes.value[targetKey] || item.notes || "";
-
         return {
           order_id: orderData.id,
           menu_id: item.id || item.menu_id,
@@ -265,16 +268,14 @@ export function useCustomerCart(state) {
       const { error: itemsError } = await supabase
         .from("order_items")
         .insert(orderItems);
-
       if (itemsError) throw itemsError;
 
       successOrderCode.value = orderData.order_code;
-
       state.cart = [];
       itemNotes.value = {};
       showNoteInput.value = {};
-      sessionStorage.removeItem(`cart_${restaurantId}_${tableId}`);
-      sessionStorage.removeItem(`notes_${restaurantId}_${tableId}`);
+      sessionStorage.removeItem(`cart_${resId}_${tabId}`);
+      sessionStorage.removeItem(`notes_${resId}_${tabId}`);
 
       showSuccessModal.value = true;
     } catch (error) {

@@ -22,8 +22,8 @@ export function useOwnerOrders(state) {
   const promptpayId = ref("0987674247");
 
   // Constants
-  const statuses = ["active", "kitchen", "ready", "completed", "paid"];
-  const steps = ["new", "preparing", "ready", "completed"];
+  const statuses = ["active", "kitchen", "ready", "served", "paid"];
+  const steps = ["new", "preparing", "ready", "served"];
 
   // ==========================================
   // 2. Helper Functions
@@ -31,9 +31,12 @@ export function useOwnerOrders(state) {
   function mapDbStatusToUi(dbStatus) {
     const mapping = {
       pending: "new",
+      new: "new",
       preparing: "preparing",
+      cooking: "preparing",
       ready: "ready",
-      served: "completed",
+      served: "served",
+      completed: "paid",
       paid: "paid",
       cancelled: "cancelled",
     };
@@ -45,7 +48,7 @@ export function useOwnerOrders(state) {
       new: "pending",
       preparing: "preparing",
       ready: "ready",
-      completed: "served",
+      served: "served",
       paid: "paid",
     };
     return mapping[uiStatus] || uiStatus;
@@ -60,12 +63,21 @@ export function useOwnerOrders(state) {
           let displayName = item.menu_name;
           if (item.menu_items) {
             if (state.language === "th") {
-              displayName = item.menu_items.name_th || item.menu_items.name || item.menu_name;
+              displayName =
+                item.menu_items.name_th ||
+                item.menu_items.name ||
+                item.menu_name;
             } else {
-              displayName = item.menu_items.name || item.menu_items.name_th || item.menu_name;
+              displayName =
+                item.menu_items.name ||
+                item.menu_items.name_th ||
+                item.menu_name;
             }
           }
-          return displayName || (state.language === "en" ? "Unknown Item" : "ไม่ระบุชื่อเมนู");
+          return (
+            displayName ||
+            (state.language === "en" ? "Unknown Item" : "ไม่ระบุชื่อเมนู")
+          );
         },
         quantity: parseInt(item.quantity || 1),
         price: itemPrice,
@@ -93,18 +105,20 @@ export function useOwnerOrders(state) {
   function getStatusLabel(statusKey) {
     const labels = {
       active: state.language === "en" ? "Active" : "ปัจจุบัน (ทั้งหมด)",
-      kitchen: state.language === "en" ? "Kitchen" : "ในครัว (ใหม่/กำลังทำ)",
-      ready: state.language === "en" ? "To Serve" : "รอเสิร์ฟ",
-      completed: state.language === "en" ? "To Pay" : "รอเช็คบิล",
-      paid: state.language === "en" ? "History" : "ประวัติ (จ่ายแล้ว)",
+      kitchen: state.language === "en" ? "Kitchen" : "1-2. ในครัว",
+      ready: state.language === "en" ? "To Serve" : "3. รอเสิร์ฟ",
+      served: state.language === "en" ? "To Pay" : "4. เสิร์ฟแล้ว (รอจ่ายเงิน)",
+      paid: state.language === "en" ? "History" : "5. ประวัติ (จ่ายแล้ว)",
     };
     return labels[statusKey?.toLowerCase()] || statusKey;
   }
 
   function getFilteredArray(allOrders, currentFilter) {
     return allOrders.filter((order) => {
-      if (currentFilter === "active") return order.status !== "paid" && order.status !== "cancelled";
-      if (currentFilter === "kitchen") return order.status === "new" || order.status === "preparing";
+      if (currentFilter === "active")
+        return order.status !== "paid" && order.status !== "cancelled";
+      if (currentFilter === "kitchen")
+        return order.status === "new" || order.status === "preparing";
       return order.status === currentFilter;
     });
   }
@@ -112,37 +126,48 @@ export function useOwnerOrders(state) {
   // ==========================================
   // 3. Computed Properties
   // ==========================================
-  const filteredOrders = computed(() => getFilteredArray(orders.value, filter.value));
+  const filteredOrders = computed(() =>
+    getFilteredArray(orders.value, filter.value),
+  );
 
   const counts = computed(() => ({
     new: orders.value.filter((o) => o.status === "new").length,
     preparing: orders.value.filter((o) => o.status === "preparing").length,
     ready: orders.value.filter((o) => o.status === "ready").length,
-    completed: orders.value.filter((o) => o.status === "completed").length,
+    served: orders.value.filter((o) => o.status === "served").length,
     paid: orders.value.filter((o) => o.status === "paid").length,
   }));
 
-  const orderTotal = computed(() => (selected.value ? selected.value.totalPrice : 0));
+  const orderTotal = computed(() =>
+    selected.value ? selected.value.totalPrice : 0,
+  );
 
   const canCancel = computed(
-    () => selected.value && !["completed", "cancelled", "paid"].includes(selected.value.status)
+    () =>
+      selected.value &&
+      !["served", "cancelled", "paid"].includes(selected.value.status),
   );
 
   const canAdvance = computed(
-    () => selected.value && steps.indexOf(selected.value.status) < steps.length - 1 && selected.value.status !== "cancelled"
+    () =>
+      selected.value &&
+      steps.indexOf(selected.value.status) < steps.length - 1 &&
+      !["cancelled", "paid"].includes(selected.value.status),
   );
 
   const canRollback = computed(
-    () => selected.value && steps.indexOf(selected.value.status) > 0 && selected.value.status !== "paid" && selected.value.status !== "cancelled"
+    () =>
+      selected.value &&
+      steps.indexOf(selected.value.status) > 0 &&
+      !["paid", "cancelled"].includes(selected.value.status),
   );
-
   // ==========================================
   // 4. API & Actions
   // ==========================================
   async function fetchOrders() {
     if (!restaurantId.value) return;
     loading.value = true;
-    
+
     const { data, error } = await supabase
       .from("orders")
       .select("*, order_items(*, menu_items(*))")
@@ -154,11 +179,14 @@ export function useOwnerOrders(state) {
       const currentFiltered = getFilteredArray(orders.value, filter.value);
 
       if (selected.value) {
-        const updatedSelected = orders.value.find((o) => o.id === selected.value.id);
+        const updatedSelected = orders.value.find(
+          (o) => o.id === selected.value.id,
+        );
         if (updatedSelected) {
           selected.value = updatedSelected;
         } else {
-          selected.value = currentFiltered.length > 0 ? currentFiltered[0] : null;
+          selected.value =
+            currentFiltered.length > 0 ? currentFiltered[0] : null;
         }
       } else if (currentFiltered.length > 0) {
         selected.value = currentFiltered[0];
@@ -178,9 +206,13 @@ export function useOwnerOrders(state) {
 
     const orderIndex = orders.value.findIndex((o) => o.id === orderId);
     if (orderIndex !== -1) orders.value[orderIndex].status = nextUiStatus;
-    if (selected.value && selected.value.id === orderId) selected.value.status = nextUiStatus;
+    if (selected.value && selected.value.id === orderId)
+      selected.value.status = nextUiStatus;
 
-    const { error } = await supabase.from("orders").update({ status: nextDbStatus }).eq("id", orderId);
+    const { error } = await supabase
+      .from("orders")
+      .update({ status: nextDbStatus })
+      .eq("id", orderId);
     if (error) {
       console.error("Error updating status:", error);
       fetchOrders();
@@ -198,7 +230,10 @@ export function useOwnerOrders(state) {
     if (orderIndex !== -1) orders.value[orderIndex].status = prevUiStatus;
     if (selected.value) selected.value.status = prevUiStatus;
 
-    const { error } = await supabase.from("orders").update({ status: prevDbStatus }).eq("id", orderId);
+    const { error } = await supabase
+      .from("orders")
+      .update({ status: prevDbStatus })
+      .eq("id", orderId);
     if (error) {
       console.error("Error rolling back status:", error);
       fetchOrders();
@@ -207,11 +242,16 @@ export function useOwnerOrders(state) {
 
   async function cancelOrder(orderId) {
     const confirmCancel = confirm(
-      state.language === "en" ? "Are you sure you want to cancel this order?" : "คุณแน่ใจหรือไม่ที่จะยกเลิกคำสั่งซื้อนี้?"
+      state.language === "en"
+        ? "Are you sure you want to cancel this order?"
+        : "คุณแน่ใจหรือไม่ที่จะยกเลิกคำสั่งซื้อนี้?",
     );
     if (!confirmCancel) return;
 
-    const { error } = await supabase.from("orders").update({ status: "cancelled" }).eq("id", orderId);
+    const { error } = await supabase
+      .from("orders")
+      .update({ status: "cancelled" })
+      .eq("id", orderId);
     if (!error) {
       fetchOrders();
     } else {
@@ -240,11 +280,16 @@ export function useOwnerOrders(state) {
     isProcessingPayment.value = true;
 
     try {
-      const { error: updateError } = await supabase.from("orders").update({ status: "paid" }).eq("id", selected.value.id);
+      const { error: updateError } = await supabase
+        .from("orders")
+        .update({ status: "paid" })
+        .eq("id", selected.value.id);
       if (updateError) throw updateError;
 
-      const targetTableId = selected.value.raw.table_id || selected.value.raw.table_number;
-      const targetRestaurantId = selected.value.raw.restaurant_id || restaurantId.value;
+      const targetTableId =
+        selected.value.raw.table_id || selected.value.raw.table_number;
+      const targetRestaurantId =
+        selected.value.raw.restaurant_id || restaurantId.value;
 
       const { error: rpcError } = await supabase.rpc("clear_table_session", {
         p_table_id: targetTableId,
@@ -263,7 +308,11 @@ export function useOwnerOrders(state) {
       }, 2000);
     } catch (err) {
       console.error("Error clearing table:", err);
-      alert(state.language === "en" ? "Error processing payment." : "เกิดข้อผิดพลาดในการชำระเงิน");
+      alert(
+        state.language === "en"
+          ? "Error processing payment."
+          : "เกิดข้อผิดพลาดในการชำระเงิน",
+      );
       isProcessingPayment.value = false;
     }
   }
@@ -296,13 +345,18 @@ export function useOwnerOrders(state) {
         .channel(`public:orders-${restaurantId.value}`)
         .on(
           "postgres_changes",
-          { event: "*", schema: "public", table: "orders", filter: `restaurant_id=eq.${restaurantId.value}` },
-          () => fetchOrders()
+          {
+            event: "*",
+            schema: "public",
+            table: "orders",
+            filter: `restaurant_id=eq.${restaurantId.value}`,
+          },
+          () => fetchOrders(),
         )
         .on(
           "postgres_changes",
           { event: "*", schema: "public", table: "order_items" },
-          () => fetchOrders()
+          () => fetchOrders(),
         )
         .subscribe();
     }

@@ -35,52 +35,53 @@ export function useStaffOrders(state, showNewOrderModal) {
       "ไม่ใส่",
     ];
 
-    // ตรวจสอบทั้ง customer_note (หมายเหตุรวมของออเดอร์) และ item.note (หมายเหตุรายชิ้น)
-    const orderNoteText = (order.customer_note || "").toLowerCase();
-    const isOrderAllergy = allergyKeywords.some((keyword) =>
-      orderNoteText.includes(keyword),
-    );
+    orders.value = (data || []).map((order) => {
+      // ✅ ย้ายเข้ามาตรวจราย order ข้างในลูป
+      const orderNoteText = (order.customer_note || "").toLowerCase();
+      const isOrderAllergy = allergyKeywords.some((keyword) =>
+        orderNoteText.includes(keyword),
+      );
 
-    // รวบรวมรายการแพ้หรือดึงจากโน้ตมาแสดง
-    let detectedAllergies = order.allergies || [];
-    if (isOrderAllergy && detectedAllergies.length === 0) {
-      detectedAllergies = [order.customer_note || "มีประวัติการแพ้อาหาร"];
-    }
+      let detectedAllergies = order.allergies || [];
+      if (isOrderAllergy && detectedAllergies.length === 0) {
+        detectedAllergies = [order.customer_note || "มีประวัติการแพ้อาหาร"];
+      }
 
-    orders.value = data.map((order) => ({
-      id: order.id,
-      orderNumber: order.order_code || `A-${100 + order.id}`,
-      tableNumber: order.table_number?.replace("T-", "") || "?",
-      time: new Date(order.created_at).toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-      }),
-      status: order.status === "pending" ? "new" : order.status,
-      items: (order.order_items || []).map((item, index) => {
-        const noteText = (item.note || "").toLowerCase();
-        const isAllergy = allergyKeywords.some((keyword) =>
-          noteText.includes(keyword),
-        );
+      return {
+        id: order.id,
+        orderNumber: order.order_code || `A-${100 + order.id}`,
+        tableNumber: order.table_number?.replace("T-", "") || "?",
+        time: new Date(order.created_at).toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+        status: order.status === "pending" ? "new" : order.status,
+        items: (order.order_items || []).map((item, index) => {
+          const noteText = (item.note || "").toLowerCase();
+          const isAllergy = allergyKeywords.some((keyword) =>
+            noteText.includes(keyword),
+          );
 
-        let displayName = item.menu_name;
-        if (state.language === "th") {
-          displayName = item.menu_name_th || item.name_th || item.menu_name;
-        } else {
-          displayName = item.menu_name || item.name;
-        }
+          let displayName = item.menu_name;
+          if (state.language === "th") {
+            displayName = item.menu_name_th || item.name_th || item.menu_name;
+          } else {
+            displayName = item.menu_name || item.name;
+          }
 
-        return {
-          id: `${order.id}-${item.id}-${index}`,
-          name: displayName,
-          quantity: item.quantity,
-          note: item.note,
-          isAllergy: isAllergy,
-        };
-      }),
-      customerNote: order.customer_note,
-      allergies: order.allergies || [],
-      type: order.type || "dine_in",
-    }));
+          return {
+            id: `${order.id}-${item.id}-${index}`,
+            name: displayName,
+            quantity: item.quantity,
+            note: item.note,
+            isAllergy: isAllergy,
+          };
+        }),
+        customerNote: order.customer_note,
+        allergies: detectedAllergies,
+        type: order.type || "dine_in",
+      };
+    });
   }
 
   // Trigger alert modal for new order

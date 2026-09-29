@@ -1,25 +1,44 @@
 import { ref, computed, watch, onUnmounted, nextTick } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { supabase } from "../../supabaseClient";
-import { useSession } from "../useSession"; // อ้างอิงกลับไปที่ composables/useSession.js
+import { useSession } from "../useSession";
 
 export function useCustomerMenu(state, onMenuFetched = () => {}) {
   const route = useRoute();
   const router = useRouter();
   const { saveSession, loadSession } = useSession();
 
-  // ==========================================
-  // 1. State Declarations
-  // ==========================================
   const loading = ref(true);
-  const isSessionExpired = ref(false);
+
+  // เช็คจาก Storage ทันที
+  const isSessionExpired = ref(
+    sessionStorage.getItem("is_table_cleared") === "true",
+  );
   const customerInfo = ref(null);
 
   const showModal = ref(false);
   const selectedItem = ref(null);
   const isAiChatOpen = ref(false);
   const showRecommendationModal = ref(false);
-  const userPreferences = ref(null);
+
+  const filterVersion = ref(0);
+
+  // ตัวแปรป้องกัน Ghost Click และแก้บั๊ก Realtime ตีกัน
+  let cartActionCooldown = false;
+  let syncTimer = null;
+  let lastLocalCartUpdate = 0;
+
+  const getInitialPreferences = () => {
+    try {
+      const saved = sessionStorage.getItem("customer_preferences");
+      return saved ? JSON.parse(saved) : null;
+    } catch (e) {
+      console.error("[useCustomerMenu] Error parsing preferences:", e);
+      return null;
+    }
+  };
+
+  const userPreferences = ref(getInitialPreferences());
 
   const isOrderModalOpen = ref(false);
   const latestOrderUpdate = ref(null);
@@ -27,20 +46,24 @@ export function useCustomerMenu(state, onMenuFetched = () => {}) {
 
   let orderRealtimeChannel = null;
   let realtimeChannel = null;
+  let removeMenuRouterGuard = null;
 
-  // ==========================================
-  // 2. Computed Properties
-  // ==========================================
   const restaurantId = computed(
     () =>
       route.query.restaurantId ||
       sessionStorage.getItem("customer_restaurant_id") ||
       "",
   );
-  const tableId = computed(
-    () =>
-      route.query.tableId || sessionStorage.getItem("customer_table_id") || "",
-  );
+
+  const tableId = computed(() => {
+    const sessionTab = sessionStorage.getItem("customer_table_id");
+    const urlTab = route.query.tableId;
+    if (sessionTab && urlTab && sessionTab.startsWith(urlTab)) {
+      return sessionTab;
+    }
+    return sessionTab || urlTab || "";
+  });
+
   const targetMenuId = computed(() => route.query.idmenu || null);
   const language = computed(() => state.language || "th");
   const cart = computed(() => state.cart || []);
@@ -63,6 +86,7 @@ export function useCustomerMenu(state, onMenuFetched = () => {}) {
   });
 
   const groupedMenu = computed(() => {
+    const _forceTrigger = filterVersion.value;
     const items = state.menuItems || [];
     const isTh = state.language === "th";
     const query = (state.searchQuery || "").toLowerCase().trim();
@@ -80,7 +104,6 @@ export function useCustomerMenu(state, onMenuFetched = () => {}) {
           item.name_th && item.name_th.toLowerCase().includes(query);
         return matchEng || matchTh;
       });
-
       return [
         {
           key: "Search",
@@ -97,7 +120,6 @@ export function useCustomerMenu(state, onMenuFetched = () => {}) {
 
     enhancedItems.forEach((item) => {
       if (item._status.isRecommended) recommendedItems.push(item);
-
       const key = item.category || "Other";
       const label = isTh
         ? item.category_th || item.category || "อื่นๆ"
@@ -108,7 +130,6 @@ export function useCustomerMenu(state, onMenuFetched = () => {}) {
     });
 
     const result = Array.from(groups.values());
-
     if (recommendedItems.length > 0) {
       result.unshift({
         key: "Recommended",
@@ -116,13 +137,9 @@ export function useCustomerMenu(state, onMenuFetched = () => {}) {
         items: recommendedItems,
       });
     }
-
     return result;
   });
 
-  // ==========================================
-  // 3. Helper Functions & Formatters
-  // ==========================================
   const openModal = (item) => {
     selectedItem.value = item;
     showModal.value = true;
@@ -137,17 +154,33 @@ export function useCustomerMenu(state, onMenuFetched = () => {}) {
 
   const handlePreferencesSaved = (prefs) => {
     userPreferences.value = prefs;
+    sessionStorage.setItem("customer_preferences", JSON.stringify(prefs));
+    filterVersion.value++;
     showRecommendationModal.value = false;
   };
 
+  const handlePreferencesReset = () => {
+    userPreferences.value = null;
+    sessionStorage.removeItem("customer_preferences");
+    filterVersion.value++;
+  };
+
   function getItemStatus(item, prefs) {
-    if (!prefs)
+    const hasActiveFilters = Boolean(
+      prefs &&
+      ((Array.isArray(prefs.diets) && prefs.diets.length > 0) ||
+        (Array.isArray(prefs.allergies) && prefs.allergies.length > 0) ||
+        (typeof prefs.spiceLevel === "number" && prefs.spiceLevel < 3)),
+    );
+
+    if (!hasActiveFilters) {
       return {
-        isRecommended: Boolean(item.is_recommended),
+        isRecommended: false,
         isAllergic: false,
         isTooSpicy: false,
         isDietConflict: false,
       };
+    }
 
     const allergensSource = [
       ...(Array.isArray(item.allergens) ? item.allergens : [item.allergens]),
@@ -272,13 +305,6 @@ export function useCustomerMenu(state, onMenuFetched = () => {}) {
           ? "อาหารเสิร์ฟครบถึงโต๊ะเรียบร้อยแล้ว ขอให้มีความสุขกับมื้อนี้ครับ"
           : "Enjoy your meal! Served at your table.",
       },
-      completed: {
-        step: 5,
-        title: isTh ? "ปิดบิลเสร็จสิ้น" : "Order Completed",
-        desc: isTh
-          ? "ชำระเงินเรียบร้อยแล้ว ขอบคุณที่มาอุดหนุนครับ"
-          : "Bill settled. Thank you for dining with us!",
-      },
       cancelled: {
         step: 0,
         title: isTh ? "ออเดอร์ถูกยกเลิก" : "Order Cancelled",
@@ -334,28 +360,96 @@ export function useCustomerMenu(state, onMenuFetched = () => {}) {
   };
 
   const getItemQuantity = (itemId) => {
-    if (!state.cart) return 0;
-    return state.cart
-      .filter(
-        (cartItem) => cartItem.id === itemId || cartItem.menu_id === itemId,
-      )
-      .reduce((sum, item) => sum + (Number(item.quantity) || 1), 0);
+    if (!state.cart || !Array.isArray(state.cart)) return 0;
+
+    // รวมจำนวน (quantity) ของทุกชิ้นในตะกร้าที่มี id หรือ menu_id ตรงกัน
+    return state.cart.reduce((sum, item) => {
+      const currentId = item.id || item.menu_id;
+      if (String(currentId) === String(itemId)) {
+        return sum + (Number(item.quantity) || 1);
+      }
+      return sum;
+    }, 0);
   };
 
-  const goToOrder = () => {
-    if (restaurantId.value)
-      sessionStorage.setItem("customer_restaurant_id", restaurantId.value);
-    if (tableId.value)
-      sessionStorage.setItem("customer_table_id", tableId.value);
-    router.push({
-      path: "/order",
-      query: { restaurantId: restaurantId.value, tableId: tableId.value },
-    });
+  const lockToThankYouState = () => {
+    isSessionExpired.value = true;
+    loading.value = false;
+
+    if (!removeMenuRouterGuard) {
+      removeMenuRouterGuard = router.beforeEach((to, from, next) => {
+        next(false);
+      });
+    }
+
+    window.history.pushState(null, "", window.location.href);
+    window.onpopstate = () => {
+      window.history.pushState(null, "", window.location.href);
+    };
   };
 
-  // ==========================================
-  // 4. API & Realtime Subscriptions
-  // ==========================================
+  const triggerSessionClear = () => {
+    isOrderModalOpen.value = false;
+    state.cart = [];
+    sessionStorage.setItem("is_table_cleared", "true");
+    if (restaurantId.value && tableId.value) {
+      sessionStorage.setItem(
+        `expired_${restaurantId.value}_${tableId.value}`,
+        "true",
+      );
+      sessionStorage.removeItem(`cart_${restaurantId.value}_${tableId.value}`);
+    }
+    localStorage.removeItem("customer_session");
+    sessionStorage.removeItem("has_seen_recommendation");
+    sessionStorage.removeItem("customer_preferences");
+
+    lockToThankYouState();
+  };
+
+  async function checkTableStatus(resId, tabId) {
+    if (sessionStorage.getItem("is_table_cleared") === "true") {
+      lockToThankYouState();
+      return false;
+    }
+
+    try {
+      const cleanTabId = String(tabId).trim();
+      const rawClean = cleanTabId.split("-")[0].replace(/\D/g, "").trim();
+
+      const { data: sessionData, error: sessionErr } = await supabase
+        .from("table_sessions")
+        .select("status")
+        .eq("restaurant_id", resId)
+        .eq("table_id", tabId)
+        .maybeSingle();
+
+      if (sessionErr) console.error("Session check error:", sessionErr);
+
+      // ถ้าไม่มีข้อมูล Session เลย (เช่น เพิ่งลบออก หรือโต๊ะใหม่กิ๊ก)
+      // ให้ถือว่าโต๊ะยังปกติ (ยังไม่ต้องเคลียร์) เพื่อรอให้ initializeCustomerSession ไปสร้างใหม่อัตโนมัติ
+      if (!sessionData) {
+        isSessionExpired.value = false;
+        return true;
+      }
+
+      // ถ้ามีข้อมูล session แล้ว ค่อยเช็คว่าสถานะเป็น cleared / empty / available หรือไม่
+      const isCleared = ["available", "empty", "cleared"].includes(
+        sessionData.status?.toLowerCase(),
+      );
+
+      if (isCleared) {
+        triggerSessionClear();
+        return false;
+      }
+
+      isSessionExpired.value = false;
+      return true;
+    } catch (err) {
+      console.error("Error checking table status:", err);
+      return true;
+    }
+  }
+
   const setupRealtimeOrders = async (resId, tabId) => {
     if (!resId || !tabId) return;
     if (orderRealtimeChannel) {
@@ -364,7 +458,8 @@ export function useCustomerMenu(state, onMenuFetched = () => {}) {
     }
 
     const cleanTabId = String(tabId).trim();
-    const paddedTabId = cleanTabId.padStart(2, "0");
+    const rawClean = cleanTabId.split("-")[0].replace(/\D/g, "").trim();
+    const paddedTabId = rawClean ? rawClean.padStart(2, "0") : cleanTabId;
     const channelName = `realtime_orders_${resId}_${cleanTabId}_${Date.now()}`;
 
     orderRealtimeChannel = supabase
@@ -372,30 +467,44 @@ export function useCustomerMenu(state, onMenuFetched = () => {}) {
       .on(
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "orders" },
-        (payload) => {
+        async (payload) => {
           const newOrder = payload.new;
           if (!newOrder) return;
 
           const targetRes = String(newOrder.restaurant_id || "").trim();
           const targetTable = String(newOrder.table_number || "").trim();
+          const targetTableBase = targetTable
+            .split("-")[0]
+            .replace(/\D/g, "")
+            .trim();
+
           const isSameRestaurant =
             !targetRes || targetRes === String(resId).trim();
+
           const isSameTable =
             targetTable === cleanTabId ||
             targetTable === paddedTabId ||
-            parseInt(targetTable, 10) === parseInt(cleanTabId, 10);
+            (rawClean &&
+              (targetTable === rawClean || targetTableBase === rawClean));
 
           if (!isSameRestaurant || !isSameTable) return;
 
           const orderIdKey = String(newOrder.id);
           const oldStatus = previousOrderStatusMap.value[orderIdKey];
-          const newStatus = newOrder.status;
+          const newStatus = String(newOrder.status || "").toLowerCase();
 
           previousOrderStatusMap.value[orderIdKey] = newStatus;
-
           if (oldStatus && oldStatus === newStatus) return;
 
+          if (newStatus === "paid" || newStatus === "completed") {
+            triggerSessionClear();
+            return;
+          }
+
           if (newStatus) {
+            await fetchMenuData();
+            await checkTableStatus(resId, tabId);
+
             const statusDetail = getDetailedOrderStatus(newStatus);
             latestOrderUpdate.value = {
               orderId: newOrder.order_code || newOrder.id,
@@ -403,7 +512,7 @@ export function useCustomerMenu(state, onMenuFetched = () => {}) {
               table_number: newOrder.table_number || cleanTabId,
               status:
                 statusDetail.step > 0
-                  ? `Step ${statusDetail.step}/5: ${statusDetail.title}`
+                  ? `Step ${statusDetail.step}/4: ${statusDetail.title}`
                   : statusDetail.title,
               message: newOrder.customer_note
                 ? `${statusDetail.desc} (Note: ${newOrder.customer_note})`
@@ -411,39 +520,13 @@ export function useCustomerMenu(state, onMenuFetched = () => {}) {
             };
 
             isOrderModalOpen.value = false;
-            nextTick(() => {
-              isOrderModalOpen.value = true;
-            });
+            await nextTick();
+            isOrderModalOpen.value = true;
           }
         },
       )
       .subscribe();
   };
-
-  async function checkTableStatus(resId, tabId) {
-    try {
-      const { data, error } = await supabase
-        .from("table_sessions")
-        .select("status")
-        .eq("restaurant_id", resId)
-        .eq("table_id", tabId)
-        .maybeSingle();
-      if (error) throw error;
-      if (data && data.status === "available") {
-        const { error: updateError } = await supabase
-          .from("table_sessions")
-          .update({ status: "occupied", cart_items: [] })
-          .eq("restaurant_id", resId)
-          .eq("table_id", tabId);
-        if (updateError) throw updateError;
-      }
-      isSessionExpired.value = false;
-      return true;
-    } catch (err) {
-      console.error("Error checking table status:", err);
-      return true;
-    }
-  }
 
   async function fetchMenuData() {
     const currentResId = restaurantId.value;
@@ -484,7 +567,7 @@ export function useCustomerMenu(state, onMenuFetched = () => {}) {
   }
 
   async function initializeCustomerSession(resId, tabId) {
-    if (!resId || !tabId) return;
+    if (!resId || !tabId || isSessionExpired.value) return;
     let sessionData = loadSession("customer_session");
     if (!sessionData) {
       sessionData = {
@@ -509,9 +592,7 @@ export function useCustomerMenu(state, onMenuFetched = () => {}) {
     }
   }
 
-  // ==========================================
-  // 5. Cart Management
-  // ==========================================
+  // ✅ ระบบ Realtime ตะกร้าที่มี Echo Cancellation ป้องกันการเด้งไปมา
   const setupRealtimeCart = async (resId, tabId) => {
     if (!resId || !tabId) return;
     if (realtimeChannel) {
@@ -525,49 +606,79 @@ export function useCustomerMenu(state, onMenuFetched = () => {}) {
       .on(
         "postgres_changes",
         {
-          event: "UPDATE",
+          event: "*",
           schema: "public",
           table: "table_sessions",
           filter: `table_id=eq.${tabId}`,
         },
         (payload) => {
-          if (payload.new.restaurant_id && payload.new.restaurant_id !== resId)
-            return;
-          if (
-            payload.new.status === "available" &&
-            (payload.old.status !== "available" ||
-              payload.old.status === undefined)
-          ) {
-            state.cart = [];
-            sessionStorage.removeItem(`cart_${resId}_${tabId}`);
-            localStorage.removeItem("customer_session");
-            isSessionExpired.value = true;
+          if (payload.eventType === "DELETE") {
+            triggerSessionClear();
             return;
           }
-          state.cart = payload.new.cart_items || [];
+          if (payload.new?.restaurant_id && payload.new.restaurant_id !== resId)
+            return;
+          if (
+            payload.new?.status === "available" ||
+            payload.new?.status === "empty" ||
+            payload.new?.status === "cleared"
+          ) {
+            triggerSessionClear();
+            return;
+          }
+
+          // 🛡️ หัวใจสำคัญ: ถ้าเครื่องนี้เพิ่งกดไม่เกิน 1.5 วินาที ห้ามรับข้อมูลเก่าจากเซิร์ฟเวอร์มาทับ
+          if (Date.now() - lastLocalCartUpdate < 1500) {
+            return;
+          }
+
+          const incomingCart = payload.new?.cart_items || [];
+          if (JSON.stringify(state.cart) !== JSON.stringify(incomingCart)) {
+            state.cart = incomingCart;
+          }
         },
       )
       .subscribe();
   };
 
-  const syncCartToServer = async (currentCart) => {
-    if (!restaurantId.value || !tableId.value) return;
-    try {
-      await supabase.rpc("sync_table_cart", {
-        p_table_id: tableId.value,
-        p_restaurant_id: restaurantId.value,
-        p_cart_items: currentCart,
-      });
-    } catch (err) {
-      console.error("Error syncing cart to server:", err);
-    }
+  // ✅ ฟังก์ชัน Debounce การซิงค์ไปเซิร์ฟเวอร์ ป้องกัน Request ชนกัน
+  const queueCartSync = (cartToSync) => {
+    lastLocalCartUpdate = Date.now();
+    if (syncTimer) clearTimeout(syncTimer);
+    syncTimer = setTimeout(async () => {
+      if (!restaurantId.value || !tableId.value || isSessionExpired.value)
+        return;
+      try {
+        await supabase.rpc("sync_table_cart", {
+          p_table_id: tableId.value,
+          p_restaurant_id: restaurantId.value,
+          p_cart_items: cartToSync,
+        });
+      } catch (err) {
+        console.error("Error syncing cart to server:", err);
+      }
+    }, 350);
   };
 
   const addToCart = async (item) => {
+    if (isSessionExpired.value) return;
+
+    // ล็อกป้องกันการกดซ้ำเร็วเกินไป หรือเบราว์เซอร์ยิง click ซ้อน
+    if (cartActionCooldown) return;
+    cartActionCooldown = true;
+    setTimeout(() => {
+      cartActionCooldown = false;
+    }, 280);
+
     let currentCart = state.cart ? [...state.cart] : [];
     const itemId = item.id || item.menu_id;
     const itemNote = (item.notes || item.note || "").trim();
-    const quantityToAdd = Number(item.quantity) || 1;
+
+    // หากมีการกำหนด quantity มาจาก AI (เช่น สั่ง 2 หรือ 3 จาน) ให้ใช้ค่านั้นเป็นค่าตั้งต้น
+    // แต่ถ้าเป็นการกดปุ่มบวกปกติ จะไม่มี item.quantity ส่งมา ให้ default เป็น 1
+    const targetQuantity = Number(item.quantity);
+    const hasExplicitQuantity = !isNaN(targetQuantity) && targetQuantity > 0;
+    const quantityToAdd = hasExplicitQuantity ? targetQuantity : 1;
 
     const existingIndex = currentCart.findIndex(
       (c) =>
@@ -576,8 +687,14 @@ export function useCustomerMenu(state, onMenuFetched = () => {}) {
     );
 
     if (existingIndex > -1) {
-      currentCart[existingIndex].quantity =
-        (Number(currentCart[existingIndex].quantity) || 1) + quantityToAdd;
+      if (hasExplicitQuantity) {
+        // ถ้าเป็นการสั่งผ่าน AI ที่ระบุจำนวนมาชัดเจน ให้เซ็ตทับด้วยจำนวนนั้นทันทีเพื่อป้องกันการบวกซ้ำสะสม
+        currentCart[existingIndex].quantity = quantityToAdd;
+      } else {
+        // ถ้าเป็นการกดปุ่มบวกหน้าจอปกติ ให้บวกสะสมเพิ่มทีละ 1
+        currentCart[existingIndex].quantity =
+          (Number(currentCart[existingIndex].quantity) || 1) + quantityToAdd;
+      }
     } else {
       currentCart.push({
         ...item,
@@ -598,10 +715,19 @@ export function useCustomerMenu(state, onMenuFetched = () => {}) {
     }
 
     state.cart = currentCart;
-    await syncCartToServer(currentCart);
+    queueCartSync(currentCart);
   };
 
+  // ✅ removeFromCart ที่มี Cooldown
   const removeFromCart = async (itemId) => {
+    if (isSessionExpired.value) return;
+
+    if (cartActionCooldown) return;
+    cartActionCooldown = true;
+    setTimeout(() => {
+      cartActionCooldown = false;
+    }, 280);
+
     if (!state.cart || state.cart.length === 0) return;
     let currentCart = [...state.cart];
     const index = currentCart.findIndex(
@@ -615,27 +741,48 @@ export function useCustomerMenu(state, onMenuFetched = () => {}) {
         currentCart.splice(index, 1);
       }
       state.cart = currentCart;
-      await syncCartToServer(currentCart);
+      queueCartSync(currentCart);
     }
   };
 
   const initCart = () => {
-    if (!restaurantId.value || !tableId.value) return;
-    const savedCart = sessionStorage.getItem(
-      `cart_${restaurantId.value}_${tableId.value}`,
-    );
+    // ถ้าใน state.cart มีของอยู่แล้ว ไม่ต้องไปโหลดทับให้ของหาย
+    if (state.cart && state.cart.length > 0) return;
+
+    const resId =
+      restaurantId.value || sessionStorage.getItem("customer_restaurant_id");
+    const tabId = tableId.value || sessionStorage.getItem("customer_table_id");
+
+    if (!resId) return;
+
+    let savedCart = null;
+    if (tabId) {
+      savedCart = sessionStorage.getItem(`cart_${resId}_${tabId}`);
+    }
+    if (!savedCart) {
+      savedCart = sessionStorage.getItem(`cart_${resId}`);
+    }
+
     if (savedCart) {
       try {
-        state.cart = JSON.parse(savedCart);
+        const parsed = JSON.parse(savedCart);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          state.cart = parsed;
+          return;
+        }
       } catch (e) {
-        state.cart = [];
+        console.error("Error parsing saved cart:", e);
       }
-    } else {
+    }
+
+    // ถ้าไม่มีจริงๆ และ state.cart ยังเป็นค่าว่าง ค่อยกำหนดเป็น []
+    if (!state.cart) {
       state.cart = [];
     }
   };
 
   const handleUpdateCartNote = async ({ target, note }) => {
+    if (isSessionExpired.value) return;
     if (!state.cart || state.cart.length === 0) return;
     const currentCart = [...state.cart];
 
@@ -666,12 +813,33 @@ export function useCustomerMenu(state, onMenuFetched = () => {}) {
       }
     }
     state.cart = currentCart;
-    await syncCartToServer(currentCart);
+    queueCartSync(currentCart);
   };
 
-  // ==========================================
-  // 6. Watchers & Lifecycles
-  // ==========================================
+  const goToOrder = async () => {
+    // ซิงค์ตะกร้าที่ค้างอยู่ให้เรียบร้อยก่อนย้ายหน้า
+    if (syncTimer) {
+      clearTimeout(syncTimer);
+      syncTimer = null;
+      if (restaurantId.value && tableId.value) {
+        await supabase.rpc("sync_table_cart", {
+          p_table_id: tableId.value,
+          p_restaurant_id: restaurantId.value,
+          p_cart_items: state.cart || [],
+        });
+      }
+    }
+
+    if (restaurantId.value)
+      sessionStorage.setItem("customer_restaurant_id", restaurantId.value);
+    if (tableId.value)
+      sessionStorage.setItem("customer_table_id", tableId.value);
+    router.push({
+      path: "/order",
+      query: { restaurantId: restaurantId.value, tableId: tableId.value },
+    });
+  };
+
   watch(
     () => [
       route.query.restaurantId,
@@ -680,26 +848,80 @@ export function useCustomerMenu(state, onMenuFetched = () => {}) {
     ],
     ([resId, tabId, name]) => {
       if (resId) sessionStorage.setItem("customer_restaurant_id", resId);
-      if (tabId) sessionStorage.setItem("customer_table_id", tabId);
+      if (tabId) {
+        // ดึงค่าหลักของโต๊ะ (เช่น "01-A12" จาก "01-A12-Q48")
+        const baseTabId = tabId.split("-")[0];
+        let currentSessionTable = sessionStorage.getItem("customer_table_id");
+
+        // ตรวจสอบว่า Session เดิมมีอยู่แล้ว และขึ้นต้นด้วยโต๊ะเบอร์เดียวกันนี้หรือไม่
+        if (
+          !currentSessionTable ||
+          !currentSessionTable.startsWith(baseTabId + "-")
+        ) {
+          // ถ้ายังไม่มี หรือเปลี่ยนโต๊ะใหม่ ค่อยสุ่มรหัสต่อท้ายใหม่ครั้งเดียว
+          const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+          const randomLetter = letters.charAt(
+            Math.floor(Math.random() * letters.length),
+          );
+          const randomNumber = String(
+            Math.floor(Math.random() * 99) + 1,
+          ).padStart(2, "0");
+          const suffix = `${randomLetter}${randomNumber}`;
+
+          currentSessionTable = `${baseTabId}-${suffix}`;
+          sessionStorage.setItem("customer_table_id", currentSessionTable);
+
+          // อัปเดต URL ให้เป็นค่าที่มี Suffix นี้ครั้งเดียวโดยไม่ให้เกิดการรีเฟรชซ้ำซ้อน
+          router.replace({
+            query: {
+              ...route.query,
+              tableId: currentSessionTable,
+            },
+          });
+        } else {
+          // ถ้ามีอยู่แล้ว (เช่น กดรีเฟรชหน้าเว็บ) ให้ใช้ค่าเดิมจาก Session ทันที ไม่สุ่มใหม่และไม่ทำให้ URL ยาวขึ้น
+          if (route.query.tableId !== currentSessionTable) {
+            router.replace({
+              query: {
+                ...route.query,
+                tableId: currentSessionTable,
+              },
+            });
+          }
+        }
+
+        const parts = currentSessionTable.split("-");
+        const baseTable = parts[0];
+        const guestCode = parts[1];
+
+        state.tableNumber = guestCode
+          ? `${baseTable} (${guestCode})`
+          : baseTable;
+      }
       if (name) state.restaurantName = name;
-      if (tabId) state.tableNumber = tabId;
     },
     { immediate: true },
   );
 
   watch(
     () => [restaurantId.value, tableId.value],
-    async ([resId, tabId]) => {
+    ([resId, tabId]) => {
       if (resId && tabId) {
-        isSessionExpired.value = false;
-        const isOpen = await checkTableStatus(resId, tabId);
-        if (!isOpen) return;
+        (async () => {
+          if (sessionStorage.getItem("is_table_cleared") === "true") {
+            lockToThankYouState();
+            return;
+          }
 
-        initCart();
-        await fetchMenuData();
-        await initializeCustomerSession(resId, tabId);
-        await setupRealtimeCart(resId, tabId);
-        await setupRealtimeOrders(resId, tabId);
+          const isOpen = await checkTableStatus(resId, tabId);
+          if (!isOpen) return;
+
+          initCart();
+          await fetchMenuData();
+          await initializeCustomerSession(resId, tabId);
+          await setupRealtimeCart(resId, tabId);
+          await setupRealtimeOrders(resId, tabId);
+        })();
       }
     },
     { immediate: true },
@@ -708,11 +930,16 @@ export function useCustomerMenu(state, onMenuFetched = () => {}) {
   watch(
     () => state.cart,
     (newCart) => {
-      if (restaurantId.value && tableId.value && newCart) {
-        sessionStorage.setItem(
-          `cart_${restaurantId.value}_${tableId.value}`,
-          JSON.stringify(newCart),
-        );
+      const resId =
+        restaurantId.value || sessionStorage.getItem("customer_restaurant_id");
+      const tabId =
+        tableId.value || sessionStorage.getItem("customer_table_id");
+      if (resId && newCart) {
+        const cartData = JSON.stringify(newCart);
+        sessionStorage.setItem(`cart_${resId}`, cartData);
+        if (tabId) {
+          sessionStorage.setItem(`cart_${resId}_${tabId}`, cartData);
+        }
       }
     },
     { deep: true },
@@ -723,9 +950,12 @@ export function useCustomerMenu(state, onMenuFetched = () => {}) {
   };
 
   onUnmounted(() => {
+    if (syncTimer) clearTimeout(syncTimer);
     if (realtimeChannel) supabase.removeChannel(realtimeChannel);
     if (orderRealtimeChannel) supabase.removeChannel(orderRealtimeChannel);
     document.removeEventListener("visibilitychange", handleVisibilityChange);
+    if (removeMenuRouterGuard) removeMenuRouterGuard();
+    window.onpopstate = null;
   });
 
   return {
@@ -746,7 +976,9 @@ export function useCustomerMenu(state, onMenuFetched = () => {}) {
     groupedMenu,
     openModal,
     closeModal,
+    userPreferences,
     handlePreferencesSaved,
+    handlePreferencesReset,
     getMenuName,
     getMenuDescription,
     getMenuAllergens,
