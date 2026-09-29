@@ -104,7 +104,7 @@ const {
               </p>
               <p class="font-black text-stone-900">
                 {{ state.language === "th" ? "โต๊ะ" : "Table" }}
-                {{ route.query.tableId || state.tableNumber || "-" }}
+                {{ state.tableNumber || route.query.tableId || "-" }}
               </p>
             </div>
           </div>
@@ -150,10 +150,9 @@ const {
                       class="font-bold text-stone-900 text-sm leading-snug line-clamp-2"
                     >
                       {{
-                        state.language === "th" &&
-                        (item.name_th || item.name_TH || item.nameTh)
-                          ? item.name_th || item.name_TH || item.nameTh
-                          : item.name
+                        state.language === "th"
+                          ? item.name_th || item.name
+                          : item.name_en || item.name || item.name_th
                       }}
                     </h4>
                     <p class="font-bold text-stone-500 text-sm mt-1">

@@ -11,15 +11,15 @@ const router = useRouter();
 const orders = ref([]);
 const loading = ref(true);
 
-// Resolve table ID with multiple fallbacks
+// ค้นหาและเปลี่ยนส่วน const tableId = computed(...) ให้อยู่ตามนี้ครับ
 const tableId = computed(() => {
-  return (
-    route.params.orderId ||
-    route.params.tableId ||
-    route.query.tableId ||
-    sessionStorage.getItem("customer_table_id") ||
-    ""
-  );
+  const sessionTab = sessionStorage.getItem("customer_table_id");
+  const urlTab = route.params.tableId || route.query.tableId;
+  // ถ้ามีข้อมูลใน Session ตรงกับรหัสโต๊ะพื้นฐาน ให้นำไปใช้เพื่อแยกเครื่อง
+  if (sessionTab && urlTab && sessionTab.startsWith(urlTab)) {
+    return sessionTab;
+  }
+  return sessionTab || urlTab || route.params.orderId || "";
 });
 
 // Resolve restaurant ID with multiple fallbacks
@@ -89,36 +89,24 @@ let removeRouterGuard = null;
 // Lock user out when session expires and prevent navigation back
 const handleSessionExpiredState = () => {
   isSessionExpired.value = true;
+  sessionStorage.setItem("is_table_cleared", "true"); // ซิงค์กับ CustomerMenu
 
   const resId = restaurantId.value;
   const tabId = tableId.value;
-
   if (resId && tabId) {
     sessionStorage.setItem(`expired_${resId}_${tabId}`, "true");
+    sessionStorage.removeItem(`cart_${resId}_${tabId}`);
   }
 
-  // Clear cart cache but retain table ID for state validation on refresh
-  sessionStorage.removeItem(`cart_${resId}_${tabId}`);
+  if (state) state.cart = [];
 
-  if (state) {
-    state.cart = [];
-  }
-
-  // Intercept Vue Router navigation
   if (!removeRouterGuard) {
     removeRouterGuard = router.beforeEach((to, from, next) => {
-      if (isSessionExpired.value) {
-        next(false);
-      } else {
-        next();
-      }
+      next(false);
     });
   }
 
-  // Trap browser history back button
-  router.replace(route.fullPath);
   window.history.pushState(null, "", window.location.href);
-
   window.onpopstate = function () {
     window.history.pushState(null, "", window.location.href);
   };

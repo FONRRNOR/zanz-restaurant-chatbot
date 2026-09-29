@@ -42,7 +42,11 @@ const setupIntersectionObserver = () => {
   sections.forEach((sec) => observer.observe(sec));
 };
 
-// เรียกใช้งาน Composable พร้อม Callback สำหรับทำ IntersectionObserver
+const handleOpenChatbotFromModal = () => {
+  showRecommendationModal.value = false;
+  isAiChatOpen.value = true;
+};
+
 const {
   loading,
   isSessionExpired,
@@ -61,7 +65,9 @@ const {
   groupedMenu,
   openModal,
   closeModal,
+  userPreferences,
   handlePreferencesSaved,
+  handlePreferencesReset,
   getMenuName,
   getMenuDescription,
   getMenuAllergens,
@@ -93,8 +99,24 @@ watch(
 
 onMounted(() => {
   document.addEventListener("visibilitychange", handleVisibilityChange);
+
   const savedPrefs = sessionStorage.getItem("customer_preferences");
-  if (!savedPrefs) showRecommendationModal.value = true;
+  if (savedPrefs) {
+    try {
+      const parsedPrefs = JSON.parse(savedPrefs);
+      handlePreferencesSaved(parsedPrefs);
+    } catch (e) {
+      console.error("Invalid preferences format in storage");
+    }
+  }
+
+  const hasSeenModal = sessionStorage.getItem("has_seen_recommendation");
+  if (!hasSeenModal) {
+    showRecommendationModal.value = true;
+    sessionStorage.setItem("has_seen_recommendation", "true");
+  } else {
+    showRecommendationModal.value = false;
+  }
 });
 
 onUnmounted(() => {
@@ -105,13 +127,15 @@ onUnmounted(() => {
 
 <template>
   <div
-    class="mobile-shell flex flex-col h-screen bg-white overflow-hidden relative"
+    class="mobile-shell flex flex-col h-[100dvh] bg-white overflow-hidden relative"
   >
     <RecommendationModal
       :is-open="showRecommendationModal"
       :language="state.language"
       @save="handlePreferencesSaved"
-      @skip="handlePreferencesSaved"
+      @skip="showRecommendationModal = false"
+      @reset="handlePreferencesReset"
+      @open-chatbot="handleOpenChatbotFromModal"
     />
     <OrderUpdateModal
       :is-open="isOrderModalOpen"
@@ -122,40 +146,73 @@ onUnmounted(() => {
 
     <div
       v-if="isSessionExpired"
-      class="flex-1 flex flex-col items-center justify-center p-6 text-center z-50 bg-stone-50"
+      class="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-stone-100/90 backdrop-blur-md"
     >
       <div
-        class="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mb-6 shadow-sm"
+        class="w-full max-w-sm bg-white rounded-3xl p-8 text-center shadow-xl border border-stone-200/80 flex flex-col items-center animate-in zoom-in-95 duration-200"
       >
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          class="h-10 w-10 text-green-500"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-          stroke-width="2"
+        <div
+          class="w-20 h-20 bg-emerald-100 text-emerald-500 rounded-full flex items-center justify-center mb-6 shadow-xs ring-8 ring-emerald-50/80"
         >
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            d="M5 13l4 4L19 7"
-          />
-        </svg>
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            class="h-10 w-10 text-emerald-600"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            stroke-width="2.5"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d="M5 13l4 4L19 7"
+            />
+          </svg>
+        </div>
+
+        <h1 class="text-2xl font-black text-stone-900 mb-2">
+          {{
+            state.language === "th"
+              ? "ขอบคุณที่ใช้บริการครับ"
+              : "Thank you for dining with us"
+          }}
+        </h1>
+
+        <p class="text-stone-600 text-sm mb-6 leading-relaxed">
+          {{
+            state.language === "th"
+              ? "บิลนี้ถูกชำระเงินและโต๊ะถูกเคลียร์เรียบร้อยแล้ว หวังว่าจะได้ให้บริการท่านอีกครั้ง"
+              : "This bill has been paid and the table has been cleared. We hope to see you again soon."
+          }}
+        </p>
+
+        <div
+          class="w-full bg-red-50 p-4 rounded-2xl border border-red-200/80 flex items-start gap-3 text-left shadow-2xs"
+        >
+          <div class="p-1 bg-red-100 rounded-full text-red-600 shrink-0 mt-0.5">
+            <svg
+              class="w-4 h-4"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              stroke-width="2.5"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+              />
+            </svg>
+          </div>
+          <p class="text-xs text-red-700 font-bold leading-relaxed">
+            {{
+              state.language === "th"
+                ? "หากต้องการสั่งอาหารเพิ่ม กรุณาสแกน QR Code ที่โต๊ะของคุณใหม่อีกครั้งครับ"
+                : "If you would like to order more, please scan the QR code at your table again."
+            }}
+          </p>
+        </div>
       </div>
-      <h1 class="text-2xl font-bold text-stone-800 mb-2">
-        {{
-          state.language === "th"
-            ? "ขอบคุณที่ใช้บริการครับ"
-            : "Thank you for dining with us"
-        }}
-      </h1>
-      <p class="text-stone-600 mb-6">
-        {{
-          state.language === "th"
-            ? "บิลนี้ถูกชำระเงินและโต๊ะถูกเคลียร์เรียบร้อยแล้ว"
-            : "This bill has been paid and the table has been cleared."
-        }}
-      </p>
     </div>
 
     <div
@@ -300,7 +357,7 @@ onUnmounted(() => {
                       {{ item.priceNum ? item.priceNum.toLocaleString() : 0 }}
                       {{ state.language === "th" ? "บาท" : "Baht" }}
                     </p>
-                    <div class="h-10 flex justify-end items-center">
+                    <div class="h-9 flex justify-end items-center">
                       <button
                         v-if="getItemQuantity(item.id) === 0"
                         @click.stop="
@@ -314,46 +371,47 @@ onUnmounted(() => {
                           item._status?.isDietConflict
                         "
                         :class="[
-                          'touch-manipulation w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 transition-transform shadow-sm border',
+                          'touch-manipulation w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 transition-transform shadow-xs border',
                           item._status?.isAllergic ||
                           item._status?.isDietConflict
                             ? 'bg-stone-100 border-stone-200 text-stone-300 cursor-not-allowed'
-                            : 'bg-white border-stone-200 text-stone-900 hover:bg-stone-100 active:scale-95',
+                            : 'bg-white border-stone-300 text-stone-800 hover:bg-stone-100 active:scale-95',
                         ]"
                       >
                         <Plus
-                          :size="18"
+                          :size="16"
                           stroke-width="2.5"
                           :class="
                             item._status?.isAllergic ||
                             item._status?.isDietConflict
                               ? 'text-stone-300'
-                              : 'text-stone-500'
+                              : 'text-stone-700'
                           "
                         />
                       </button>
+
                       <div
                         v-else
-                        class="flex items-center gap-2 bg-white border border-stone-200 rounded-full p-1 shadow-sm"
+                        class="flex items-center gap-1.5 bg-stone-50 border border-stone-200 rounded-full p-1 shadow-2xs"
                         @click.stop
                       >
                         <button
                           @click.stop="removeFromCart(item.id)"
-                          class="touch-manipulation w-8 h-8 rounded-full flex items-center justify-center bg-stone-100 text-stone-600 hover:bg-stone-200"
+                          class="touch-manipulation w-7 h-7 rounded-full flex items-center justify-center bg-white text-stone-600 hover:bg-stone-200 active:scale-95 shadow-2xs"
                         >
-                          <Minus :size="14" stroke-width="3" />
+                          <Minus :size="13" stroke-width="2.5" />
                         </button>
                         <span
-                          class="w-7 text-center text-md font-bold text-stone-900"
+                          class="w-6 text-center text-sm font-bold text-stone-900 select-none"
                           >{{ getItemQuantity(item.id) }}</span
                         >
                         <button
                           @click.stop="addToCart(item)"
-                          class="touch-manipulation w-8 h-8 rounded-full flex items-center justify-center bg-stone-900 text-white"
+                          class="touch-manipulation w-7 h-7 rounded-full flex items-center justify-center bg-stone-900 text-white hover:bg-stone-800 active:scale-95 shadow-2xs"
                         >
                           <Plus
-                            :size="14"
-                            stroke-width="3"
+                            :size="13"
+                            stroke-width="2.5"
                             class="text-white"
                           />
                         </button>
@@ -390,8 +448,8 @@ onUnmounted(() => {
           @click="goToOrder"
           class="touch-manipulation w-full bg-stone-900 text-white py-4 rounded-2xl font-black flex justify-between items-center px-6 active:scale-[0.99] transition-transform shadow-lg"
         >
-          <span
-            >{{ state.language === "th" ? "ดูตะกร้า" : "View Cart" }}
+          <span>
+            {{ state.language === "th" ? "ดูตะกร้า" : "View Cart" }}
             <span class="mx-1.5 opacity-60">•</span> {{ cartCount }}
             {{
               state.language === "th"
@@ -399,12 +457,12 @@ onUnmounted(() => {
                 : cartCount === 1
                   ? "item"
                   : "items"
-            }}</span
-          >
-          <span
-            >{{ cartTotal.toLocaleString() }}
-            {{ language === "th" ? "บาท." : "Baht." }}</span
-          >
+            }}
+          </span>
+          <span>
+            {{ cartTotal.toLocaleString() }}
+            {{ language === "th" ? "บาท." : "Baht." }}
+          </span>
         </button>
       </div>
 
@@ -449,7 +507,7 @@ onUnmounted(() => {
                 </div>
                 <button
                   @click="closeModal"
-                  class="absolute top-4 right-4 w-7 h-7 bg-black/40 hover:bg-black/50 rounded-full flex items-center justify-center text-white"
+                  class="absolute top-4 right-4 w-7 h-7 bg-black/40 hover:bg-black/50 rounded-full flex items-center justify-center text-white cursor-pointer"
                 >
                   ✕
                 </button>
@@ -462,13 +520,14 @@ onUnmounted(() => {
                   </h2>
                   <span
                     class="text-lg font-bold text-emerald-700 whitespace-nowrap ml-2"
-                    >{{
+                  >
+                    {{
                       selectedItem.priceNum
                         ? selectedItem.priceNum.toLocaleString()
                         : 0
                     }}
-                    {{ state.language === "th" ? "บาท" : "Baht" }}</span
-                  >
+                    {{ state.language === "th" ? "บาท" : "Baht" }}
+                  </span>
                 </div>
 
                 <div
@@ -521,35 +580,100 @@ onUnmounted(() => {
                 </div>
 
                 <div class="border-t border-stone-100 pt-3">
-                  <p class="text-[13px] text-stone-400 font-medium mb-1">
-                    {{
-                      state.language === "th"
-                        ? "สารก่อภูมิแพ้"
-                        : "Allergen Information *"
-                    }}
-                  </p>
-                  <p class="text-[14px] text-stone-900">
-                    {{
-                      formatAllergens(getMenuAllergens(selectedItem)) ||
-                      (state.language === "th"
-                        ? "ไม่มีข้อมูลสารก่อภูมิแพ้"
-                        : "None")
-                    }}
-                  </p>
+                  <div class="text-xs flex items-baseline gap-1.5 flex-wrap">
+                    <span class="font-medium text-red-500">
+                      {{
+                        state.language === "th"
+                          ? "สารก่อภูมิแพ้:"
+                          : "Allergens:"
+                      }}
+                    </span>
+                    <span class="font-bold text-red-800">
+                      {{
+                        formatAllergens(getMenuAllergens(selectedItem)) ||
+                        (state.language === "th"
+                          ? "ไม่มีข้อมูลสารก่อภูมิแพ้"
+                          : "None")
+                      }}
+                    </span>
+                  </div>
                 </div>
 
                 <div
-                  class="flex gap-4 border-t border-stone-100 pt-3 text-xs text-stone-500"
+                  class="flex gap-4 border-t border-stone-100 pt-3 text-xs text-stone-700"
                 >
                   <div v-if="selectedItem.category">
-                    <span class="font-medium text-stone-400">{{
-                      state.language === "th" ? "หมวดหมู่: " : "Category: "
-                    }}</span
-                    >{{ selectedItem.category }}
+                    <span class="font-medium text-stone-500">
+                      {{
+                        state.language === "th" ? "หมวดหมู่: " : "Category: "
+                      }}
+                    </span>
+                    <span class="font-bold text-stone-800">{{
+                      selectedItem.category
+                    }}</span>
                   </div>
                   <div v-if="selectedItem.calories">
-                    <span class="font-medium text-stone-400">Calories: </span
-                    >{{ selectedItem.calories }} kcal
+                    <span class="font-medium text-stone-500">Calories: </span>
+                    <span class="font-bold text-stone-800"
+                      >{{ selectedItem.calories }} kcal</span
+                    >
+                  </div>
+                </div>
+
+                <div
+                  v-if="
+                    selectedItem.spice_level !== undefined &&
+                    selectedItem.spice_level !== null
+                  "
+                  class="border-t border-stone-100 pt-3 text-xs flex items-center justify-between gap-2 overflow-visible"
+                >
+                  <div
+                    class="flex items-center gap-1.5 whitespace-nowrap min-w-0"
+                  >
+                    <span class="font-medium text-stone-500 shrink-0">
+                      {{
+                        state.language === "th"
+                          ? "ระดับความเผ็ด:"
+                          : "Spiciness:"
+                      }}
+                    </span>
+                    <span class="font-bold text-stone-800 whitespace-nowrap">
+                      {{
+                        Number(selectedItem.spice_level) === 0
+                          ? state.language === "th"
+                            ? "ไม่เผ็ด (Level 0)"
+                            : "Non-spicy (Level 0)"
+                          : Number(selectedItem.spice_level) === 1
+                            ? state.language === "th"
+                              ? "เผ็ดน้อย (Level 1)"
+                              : "Mild (Level 1)"
+                            : Number(selectedItem.spice_level) === 2
+                              ? state.language === "th"
+                                ? "เผ็ดปานกลาง (Level 2)"
+                                : "Medium (Level 2)"
+                              : Number(selectedItem.spice_level) === 3
+                                ? state.language === "th"
+                                  ? "เผ็ดมาก (Level 3)"
+                                  : "Hot (Level 3)"
+                                : Number(selectedItem.spice_level) === 4
+                                  ? state.language === "th"
+                                    ? "เผ็ดจัด (Level 4)"
+                                    : "Extra Hot (Level 4)"
+                                  : state.language === "th"
+                                    ? "เผ็ดสุดขีด (Level 5)"
+                                    : "Extreme (Level 5)"
+                      }}
+                    </span>
+                  </div>
+
+                  <div
+                    class="relative w-32 h-6 flex items-center justify-end shrink-0"
+                  >
+                    <img
+                      :src="`/spice-levels/level-${Number(selectedItem.spice_level) || 0}.png`"
+                      :alt="`Spice level ${selectedItem.spice_level}`"
+                      class="h-5 w-auto object-contain transform scale-[2.8] origin-right pointer-events-none drop-shadow-xs"
+                    />
                   </div>
                 </div>
               </div>

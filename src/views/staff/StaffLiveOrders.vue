@@ -77,25 +77,26 @@ onUnmounted(() => {
 const columns = computed(() => [
   {
     status: "new",
-    title: state.language === "en" ? "New Tasks" : "ออเดอร์ใหม่",
-    action: state.language === "en" ? "Start Preparing" : "เริ่มเตรียมอาหาร",
+    title: state.language === "en" ? "1. New Orders" : "1. ออเดอร์ใหม่",
+    action: state.language === "en" ? "Start Cooking" : "เริ่มทำอาหาร",
     next: "preparing",
   },
   {
     status: "preparing",
-    title: state.language === "en" ? "Preparing" : "กำลังปรุง",
+    title: state.language === "en" ? "2. Cooking" : "2. กำลังปรุง",
     action: state.language === "en" ? "Mark Ready" : "ปรุงเสร็จแล้ว",
     next: "ready",
   },
   {
     status: "ready",
-    title: state.language === "en" ? "Ready for Pickup" : "พร้อมเสิร์ฟ",
-    action: state.language === "en" ? "Mark Completed" : "เสิร์ฟเรียบร้อย",
-    next: "completed",
+    title: state.language === "en" ? "3. Ready to Serve" : "3. พร้อมเสิร์ฟ",
+    action: state.language === "en" ? "Mark Served" : "เสิร์ฟแล้ว",
+    next: "served",
   },
   {
-    status: "completed",
-    title: state.language === "en" ? "Completed" : "เสร็จสิ้น",
+    status: "served",
+    title:
+      state.language === "en" ? "4. Served (Dine-in)" : "4. เสิร์ฟเรียบร้อย",
     action: "",
     next: "",
   },

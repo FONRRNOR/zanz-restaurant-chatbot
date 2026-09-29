@@ -77,6 +77,23 @@ const router = createRouter({
 router.beforeEach((to) => {
   const { state } = useAppState();
 
+  // ตรวจสอบว่าโต๊ะถูกเคลียร์หรือ Session จบลงแล้วหรือไม่
+  const isTableCleared = sessionStorage.getItem("is_table_cleared") === "true";
+  const resId = sessionStorage.getItem("customer_restaurant_id") || "";
+  const tabId = sessionStorage.getItem("customer_table_id") || "";
+  const isExpired =
+    resId && tabId
+      ? sessionStorage.getItem(`expired_${resId}_${tabId}`) === "true"
+      : false;
+
+  // ล็อกให้อยู่เฉพาะหน้าเมนูที่มี overlay Thank You ปรากฏอยู่ ห้ามไปหน้าอื่น
+  if (isTableCleared || isExpired) {
+    // ถ้าพยายามไปหน้าอื่นที่ไม่ใช่หน้า Customer Menu ให้หยุดการเปลี่ยนเส้นทางทันที
+    if (to.path !== "/customer/menu/mobile") {
+      return false;
+    }
+  }
+
   const publicPages = [
     "/",
     "/owner/login",
@@ -86,8 +103,9 @@ router.beforeEach((to) => {
     "/order",
   ];
 
-  const isPublicDynamicPage =
-    to.path.startsWith("/customer/order-status/mobile/");
+  const isPublicDynamicPage = to.path.startsWith(
+    "/customer/order-status/mobile/",
+  );
 
   // 1. ดึงข้อมูลจาก sessionStorage
   const savedUserString = sessionStorage.getItem("zank-active-user");
@@ -105,7 +123,7 @@ router.beforeEach((to) => {
     !isPublicDynamicPage &&
     !state.activeUser
   ) {
-    return "/"; 
+    return "/";
   }
 
   // 3. ถ้าเข้าหน้าแรกแต่มี Session ค้างอยู่ ให้ปัดไปหน้า Dashboard
