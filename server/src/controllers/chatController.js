@@ -34,9 +34,8 @@ export const handleChat = async (req, res) => {
         content: msg.text.replace(/<[^>]*>?/gm, "").trim(),
       }));
 
-    // STEP 1: Gatekeeper ตรวจสอบความเกี่ยวข้อง
     const recentContext = sanitizedHistory
-      .slice(-3)
+      .slice(-4)
       .map((h) => `${h.role}: ${h.content}`)
       .join("\n");
 
@@ -75,7 +74,6 @@ Respond ONLY with "NO" if completely off-topic.`;
       });
     }
 
-    // STEP 2: ดึงข้อมูลเมนูอาหาร
     let menuItems = [];
     try {
       const { data, error: dbError } = await supabase
@@ -130,7 +128,6 @@ Respond ONLY with "NO" if completely off-topic.`;
             .join("\n")
         : "Empty Cart";
 
-    // 🌟 ส่วนข้อมูลความต้องการและข้อจำกัดของลูกค้า
     const customerPrefsContext = `
 CUSTOMER PREFERENCES / RESTRICTIONS:
 - Allergies to Avoid (CRITICAL - DO NOT RECOMMEND items containing these): ${JSON.stringify(customerPreferences.allergies || [])}
@@ -138,7 +135,6 @@ CUSTOMER PREFERENCES / RESTRICTIONS:
 - Spice Tolerance Level (0 = None, 1 = Mild, 2 = Medium, 3 = Spicy): ${customerPreferences.spiceLevel ?? 3}
 `;
 
-    // STEP 3: System Prompt แยกภาษา (เพิ่ม customerPrefsContext เข้าไป)
     let messagesForModel = [];
 
     if (language === "en") {
@@ -146,8 +142,8 @@ CUSTOMER PREFERENCES / RESTRICTIONS:
 
 ${customerPrefsContext}
 
-CRITICAL INSTRUCTION FOR CONTEXT:
-- Always look at the "Recent conversation context" or chat history provided. If the user refers to "this menu", "it", or asks about ingredients/allergens right after discussing a specific dish, you MUST identify that dish from the conversation history and answer based on it.
+CRITICAL INSTRUCTION FOR CONTEXT & HISTORY AWARENESS:
+- Always thoroughly analyze the "Recent conversation context" or chat history. If the user refers to "this menu", "it", "that one", or wants to order a quantity of a dish discussed in previous turns (e.g., "I'll take 3 of those"), you MUST intelligently connect it to the correct dish from the history without making the user repeat the name.
 
 OUTPUT FORMAT INSTRUCTION:
 You MUST reply ONLY with a single valid raw JSON object. Never include markdown codeblocks (\`\`\`json).
@@ -173,7 +169,7 @@ RULES:
 2. CHECKING AVAILABILITY (e.g., "Do you have [Dish Name]?"):
    - Look through the "AVAILABLE MENU ITEMS" list. Confirm availability and price.
    - CRITICAL: Never mention internal codes like "ITEM_REF" or "Item Ref" in your text response. 
-   - Write a natural, mouth-watering description explaining why this dish is great (e.g., highlighting its fresh ingredients, cooking style, or flavor profile) alongside its price.
+   - Write a natural, mouth-watering description explaining why this dish is great alongside its price.
    - CRITICAL: You MUST extract the exact integer ID of the matched item and put it into "recommendedItemIds": [id] so the UI can display its menu card.
 
 3. INGREDIENTS & ALLERGENS:
@@ -184,7 +180,8 @@ RULES:
 
 4. ORDERING:
    - Set "action": "CONFIRM_ORDER_ITEMS".
-   - Populate "orderItems" with "id", "quantity", and "notes".
+   - Populate "orderItems" with exact integers for "id" and accurate "quantity" based on the user's explicit request (e.g., if the user asks for 3 portions, set "quantity": 3).
+   - CRITICAL: If a dish is ordered, ensure its ID is ALSO included in "recommendedItemIds" so that the menu card appears with its quantity badge.
 
 AVAILABLE MENU ITEMS:
 ${menuContext}
@@ -202,8 +199,9 @@ ${cartContext}`;
 
 ${customerPrefsContext}
 
-คำสั่งสำคัญเรื่องความต่อเนื่องของบทสนทนา:
-- ให้ตรวจสอบประวัติการสนทนาก่อนหน้าเสมอ หากลูกค้าใช้คำว่า "เมนูนี้", "อันนี้" หรือถามต่อจากเมนูที่เพิ่งคุยกันไป ให้ AI ดึงชื่อเมนูจากประวัติการสนทนามาใช้งานต่อเนื่องทันที
+คำสั่งสำคัญเรื่องความต่อเนื่องของบทสนทนา (Chat History Awareness):
+- คุณต้องวิเคราะห์ประวัติการสนทนาก่อนหน้าอย่างละเอียดทุกครั้ง หากลูกค้าใช้คำว่า "อันนั้น", "เมนูก่อนหน้า", "อันนี้" หรือต้องการสั่งซื้ออาหารต่อจากบทสนทนาที่เพิ่งคุยกัน (เช่น "ขออันนี้ 3 ที่", "เพิ่มอันนั้น 2 ชุด") ให้คุณดึงชื่อและรหัส ID ของเมนูจากประวัติการสนทนามาเชื่อมโยงและจัดการต่อทันทีโดยไม่ต้องให้ลูกค้าพิมพ์ชื่อซ้ำ
+- หากมีการสั่งซื้อ ให้ระบุจำนวน (quantity) ที่ถูกต้องตามที่ลูกค้าต้องการเสมอ
 
 คำสั่งเรื่องโครงสร้างการตอบกลับ:
 คุณต้องตอบกลับเป็น raw JSON object เท่านั้น ห้ามใส่ markdown codeblock (\`\`\`json) เด็ดขาด
@@ -223,17 +221,23 @@ ${customerPrefsContext}
    - ห้ามแนะนำเมนูที่มีส่วนผสมของสารก่อภูมิแพ้ตรงกับ "Allergies to Avoid" เด็ดขาด (ปลอดภัย 100%)
    - คัดเลือกเมนูที่ตรงกับโปรไฟล์รสชาติ (Taste Profiles) ที่ลูกค้าพิมพ์ถาม หรือตรงตามรูปแบบอาหาร (Diets) และระดับความเผ็ดไม่เกิน Spice Tolerance Level ที่กำหนด
    - นำรหัส ID เมนูที่ปลอดภัยใส่ใน "recommendedItemIds"
+
 2. เมื่อลูกค้าถามหาเมนู หรือถามว่ามีเมนูนี้ไหม (เช่น "มี [ชื่อเมนู] ไหม"):
    - ให้ตรวจดูจากรายชื่อเมนู ยืนยันว่ามี พร้อมระบุราคา
    - สำคัญมาก: ห้ามพูดคำว่า "ITEM_REF" หรือ "รหัสสินค้า" ออกมาในข้อความตอบกลับเด็ดขาด ให้พูดคุยด้วยภาษามนุษย์ที่เป็นธรรมชาติ
-   - ให้เพิ่มคำอธิบายสั้นๆ ที่ชวนให้น่ารับประทาน (เช่น บรรยายความอร่อย วัตถุดิบคุณภาพ หรือความพิเศษของเมนูนั้นๆ) เพื่อแนะนำให้ลูกค้ารู้สึกอยากลอง
+   - ให้เพิ่มคำอธิบายสั้นๆ ที่ชวนให้น่ารับประทาน เพื่อแนะนำให้ลูกค้ารู้สึกอยากลอง
    - คุณต้องดึงรหัส ID ของเมนูที่ตรงกัน ไปใส่ใน "recommendedItemIds": [id] เสมอ เพื่อให้หน้าจอแสดงการ์ดเมนูอาหารขึ้นมา
-3. เมื่อลูกค้าถามถึง "ส่วนผสม", "ส่วนประกอบ" หรือถามถึงเมนูต่อเนื่องจากประวัติการสนทนา (เช่น "ingredients for this menu"):
+
+3. เมื่อลูกค้าถามถึง "ส่วนผสม", "ส่วนประกอบ" หรือถามถึงเมนูต่อเนื่องจากประวัติการสนทนา (เช่น "ส่วนผสมอะไรบ้าง"):
    - ให้ระบุชื่อเมนูจากประวัติการสนทนาก่อนหน้า แล้วตอบกลับด้วยโครงสร้างนี้เท่านั้น:
      "ส่วนผสมของ [ชื่อเมนู] มีดังนี้ครับ ได้แก่ [วัตถุดิบ 1], [วัตถุดิบ 2], [วัตถุดิบ 3] โดยมีสารก่อภูมิแพ้: [ระบุสารก่อภูมิแพ้ หรือ ไม่มี]"
    - ตั้งค่า "recommendedItemIds": [] เสมอ
    - ห้ามใส่อีโมจิเด็ดขาด
-4. เมื่อลูกค้าสั่งอาหาร: ตั้งค่า "action": "CONFIRM_ORDER_ITEMS" และใส่ข้อมูลใน "orderItems"
+
+4. เมื่อลูกค้าสั่งอาหาร: 
+   - ตั้งค่า "action": "CONFIRM_ORDER_ITEMS" 
+   - ใส่ข้อมูลใน "orderItems" โดยระบุรหัสสินค้า (id) และจำนวน (quantity) ตามที่ลูกค้าสั่งจริงให้ถูกต้อง (เช่น สั่ง 3 ที่ ให้ระบุ "quantity": 3)
+   - สำคัญมาก: หากมีการสั่งซื้ออาหาร เมนูดังกล่าวจะต้องถูกใส่รหัส ID ลงใน "recommendedItemIds" ด้วยเสมอ เพื่อให้การ์ดเมนูแสดงผลพร้อมป้ายวงกลมบอกจำนวนที่หน้าจอ
 
 รายการเมนูอาหารที่มี:
 ${menuContext}
@@ -299,92 +303,29 @@ ${cartContext}`;
       parsedData.text_en = cleanFallbackText;
     }
 
-    // BACKEND AUTO-ORDER RECOVERY
-    const orderKeywords = [
-      "เอา",
-      "สั่ง",
-      "รับ",
-      "ขอลอง",
-      "เพิ่ม",
-      "ซื้อ",
-      "order",
-      "buy",
-      "add",
-    ];
-    const userIntendedToOrder = orderKeywords.some((word) =>
-      message.toLowerCase().includes(word),
-    );
-
-    if (
-      userIntendedToOrder &&
-      (!parsedData.orderItems || parsedData.orderItems.length === 0)
-    ) {
-      const lastContextText = sanitizedHistory
-        .map((h) => h.content)
-        .reverse()
-        .join(" ");
-
-      const matchedDish = (menuItems || []).find((item) => {
-        const nameTh = item.name_th;
-        const nameEn = item.name;
-        return (
-          (nameTh && lastContextText.includes(nameTh)) ||
-          (nameEn &&
-            lastContextText.toLowerCase().includes(nameEn.toLowerCase()))
-        );
-      });
-
-      if (matchedDish) {
-        const qtyMatch = message.match(/(\d+)\s*(?:ที่|จาน|ชิ้น|กล่อง|order)/);
-        const quantity = qtyMatch ? parseInt(qtyMatch[1], 10) : 1;
-
-        parsedData.action = "CONFIRM_ORDER_ITEMS";
-        parsedData.orderItems = [
-          {
-            id: matchedDish.id,
-            name: matchedDish.name_th || matchedDish.name,
-            price: matchedDish.price,
-            quantity: quantity,
-            notes: "",
-            image: matchedDish.image || "",
-          },
-        ];
-      }
-    }
-
     if (Array.isArray(parsedData.orderItems)) {
       parsedData.orderItems = parsedData.orderItems.map((item) => {
         const targetId = item.id !== undefined ? item.id : item.itemId;
-        const found = (menuItems || []).find(
-          (m) => String(m.id) === String(targetId),
-        );
-
-        const displayName = found
-          ? language === "en"
-            ? found.name || found.name_th
-            : found.name_th || found.name
-          : item.name || "Menu Item";
-
+        const found = menuItems.find((m) => String(m.id) === String(targetId));
+        const qty = Number(item.quantity) || 1;
         return {
           id: targetId,
           itemId: targetId,
-          name: displayName,
+          name: found ? found.name : item.name || "Menu Item",
           name_th: found
             ? found.name_th || found.name
             : item.name_th || item.name || "Menu Item",
           name_en: found
             ? found.name || found.name_th
-            : item.name || "Menu Item",
+            : item.name_en || item.name || "Menu Item",
           price:
             found && found.price !== undefined
               ? Number(found.price)
               : Number(item.price) || 0,
-          quantity: Number(item.quantity) || 1,
+          quantity: qty,
           notes: item.notes || item.note || "",
           note: item.notes || item.note || "",
-          image: found
-            ? found.image || found.image_url || ""
-            : item.image || "",
+          image: found?.image || "",
         };
       });
     }
@@ -398,6 +339,17 @@ ${cartContext}`;
         parsedData.recommendedItemIds.map(String).includes(String(item.id)),
       );
     }
+
+    // ทำการผูกค่า quantity เข้ากับ recommendedItems เพื่อให้ Frontend นำไปแสดงผลเป็นวงกลมบอกจำนวนได้ง่ายขึ้น
+    recommendedItems = recommendedItems.map((recItem) => {
+      const matchedOrder = parsedData.orderItems.find(
+        (order) => String(order.id) === String(recItem.id),
+      );
+      return {
+        ...recItem,
+        quantity: matchedOrder ? matchedOrder.quantity : undefined,
+      };
+    });
 
     let textTh = (parsedData.text_th || parsedData.text || "")
       .replace(
