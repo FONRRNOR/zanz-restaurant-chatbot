@@ -711,7 +711,7 @@ export function useCustomerMenu(state, onMenuFetched = () => {}) {
         quantity: quantityToAdd,
         notes: itemNote,
         note: itemNote,
-        image: item.image || "",
+        image: finalImage,
         cartItemId: `${itemId}_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
         added_by_name: customerInfo.value?.name,
         added_by_id: customerInfo.value?.id,

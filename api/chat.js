@@ -348,6 +348,7 @@ ${cartContext}`;
             : oi.name_th || oi.name || "Menu Item",
           price: matched ? Number(matched.price) : Number(oi.price) || 0,
           quantity: Number(oi.quantity) || 1,
+          image: matched?.image || oi.image || "",
         };
       });
     }
