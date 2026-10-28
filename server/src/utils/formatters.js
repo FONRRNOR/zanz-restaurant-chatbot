@@ -15,11 +15,8 @@ export const formatList = (val) => {
 export const formatIngredientsToBullets = (text, lang = "th") => {
   if (!text) return text;
 
-  // ทำความสะอาดข้อความเบื้องต้น: แทนที่ขึ้นบรรทัดใหม่ทั้งหมดด้วยช่องว่าง เพื่อป้องกันการตัดบรรทัดกลางคัน
-  const cleanedText = text.replace(/\r?\n|\r/g, " ");
-
   if (lang === "th") {
-    const thMatch = cleanedText.match(
+    const thMatch = text.match(
       /([\s\S]*?(?:ดังนี้ครับ|ดังนี้ค่ะ|ได้แก่|ประกอบด้วย)[:\s]*)([\s\S]*?)(\s*(?:โดยมี|สารก่อภูมิแพ้|แพ)[\s\S]*|$)/i,
     );
     if (thMatch) {
@@ -28,6 +25,7 @@ export const formatIngredientsToBullets = (text, lang = "th") => {
       const allergenSuffix = thMatch[3] ? thMatch[3].trim() : "";
 
       const items = rawIngredients
+        .replace(/\r?\n/g, ", ")
         .replace(/\s+และ\s+/g, ", ")
         .split(/,\s*/)
         .map((item) => item.trim().replace(/^[-•*]\s*/, ""))
@@ -39,7 +37,7 @@ export const formatIngredientsToBullets = (text, lang = "th") => {
       }
     }
   } else {
-    const enMatch = cleanedText.match(
+    const enMatch = text.match(
       /([\s\S]*?(?:ingredients|as follows|contains).*?[:\s]*)([\s\S]*?)(\s*(?:Allergens|Please note|There are|This dish contains)[\s\S]*|$)/i,
     );
     if (enMatch) {
@@ -48,6 +46,7 @@ export const formatIngredientsToBullets = (text, lang = "th") => {
       const suffix = enMatch[3] ? enMatch[3].trim() : "";
 
       const items = rawItems
+        .replace(/\r?\n/g, ", ")
         .replace(/\s+and\s+/gi, ", ")
         .split(/,\s*/)
         .map((item) => item.trim().replace(/^[-•*]\s*/, ""))

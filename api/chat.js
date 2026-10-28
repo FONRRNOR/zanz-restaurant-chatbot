@@ -23,12 +23,20 @@ function formatList(val) {
   return cleaned && cleaned !== "None" ? cleaned : "ไม่มีระบุ";
 }
 
+// ฟังก์ชันลบ ITEM_REF ออกจากข้อความ ไม่ให้หลุดไปแสดงให้ลูกค้าเห็น
+function cleanItemRefs(text) {
+  if (!text) return "";
+  return text
+    .replace(/\s*[\(\[\{]?\s*(?:item_ref|รหัส|id|code)\s*[:#-]?\s*\d+\s*[\)\]\}]?/gi, "")
+    .replace(/[^\S\r\n]{2,}/g, " ")
+    .trim();
+}
+
 function formatIngredientsToBullets(text, lang = "th") {
   if (!text) return text;
-  const cleanedText = text.replace(/\r?\n|\r/g, " ");
 
   if (lang === "th") {
-    const thMatch = cleanedText.match(
+    const thMatch = text.match(
       /([\s\S]*?(?:ดังนี้ครับ|ดังนี้ค่ะ|ได้แก่|ประกอบด้วย)[:\s]*)([\s\S]*?)(\s*(?:โดยมี|สารก่อภูมิแพ้|แพ)[\s\S]*|$)/i
     );
     if (thMatch) {
@@ -36,6 +44,7 @@ function formatIngredientsToBullets(text, lang = "th") {
       const rawIngredients = thMatch[2].trim();
       const allergenSuffix = thMatch[3] ? thMatch[3].trim() : "";
       const items = rawIngredients
+        .replace(/\r?\n/g, ", ")
         .replace(/\s+และ\s+/g, ", ")
         .split(/,\s*/)
         .map((item) => item.trim().replace(/^[-•*]\s*/, ""))
@@ -47,7 +56,7 @@ function formatIngredientsToBullets(text, lang = "th") {
       }
     }
   } else {
-    const enMatch = cleanedText.match(
+    const enMatch = text.match(
       /([\s\S]*?(?:ingredients|as follows|contains).*?[:\s]*)([\s\S]*?)(\s*(?:Allergens|Please note|There are|This dish contains)[\s\S]*|$)/i
     );
     if (enMatch) {
@@ -55,6 +64,7 @@ function formatIngredientsToBullets(text, lang = "th") {
       const rawItems = enMatch[2].trim();
       const suffix = enMatch[3] ? enMatch[3].trim() : "";
       const items = rawItems
+        .replace(/\r?\n/g, ", ")
         .replace(/\s+and\s+/gi, ", ")
         .split(/,\s*/)
         .map((item) => item.trim().replace(/^[-•*]\s*/, ""))
@@ -172,12 +182,26 @@ CUSTOMER PREFERENCES / RESTRICTIONS:
     if (language === "en") {
       systemPrompt = `You are Chef AI, an expert restaurant concierge.
 ${customerPrefsContext}
+
+CRITICAL RULES:
+1. ALLERGIES & RESTRICTIONS (STRICT ZERO-TOLERANCE):
+   - You must STRICTLY EXCLUDE any dishes that contain allergens the user mentions or listed in preferences.
+   - NEVER suggest modifying a dish (e.g., DO NOT say "we can remove cheese" or "we can use plant-based cream"). Only recommend dishes that are already 100% naturally safe.
+   - If allergic to Milk/Dairy: Strictly exclude any milk, cheese, butter, cream, creamy soups, and creamy pasta.
+   - If allergic to Egg: Strictly exclude eggs, mayonnaise, and egg-based dressings.
+
+2. TEXT FORMATTING & CLEANLINESS:
+   - NEVER include internal reference codes like "ITEM_REF", "ID", or item codes in your text response.
+   - Put all recommended item integer IDs ONLY in the "recommendedItemIds" JSON array.
+   - Format recommendations with clean line breaks:
+     - **Dish Name**: Appetizing description and why it fits.
+
 OUTPUT FORMAT: raw JSON object only.
 {
   "user_text_th": "User query translated into Thai",
   "user_text_en": "User query in English",
-  "text_th": "Natural Thai response",
-  "text_en": "Natural English response",
+  "text_th": "Natural Thai response with proper line breaks",
+  "text_en": "Natural English response with proper line breaks",
   "recommendedItemIds": [],
   "action": null,
   "orderItems": []
@@ -186,11 +210,24 @@ AVAILABLE MENU ITEMS:\n${menuContext}\nCURRENT CART:\n${cartContext}`;
     } else {
       systemPrompt = `คุณคือ เชฟ AI ผู้เชี่ยวชาญด้านอาหารและผู้ช่วยประจำร้านอาหาร
 ${customerPrefsContext}
+
+กฎสำคัญที่สุด (STRICT ZERO-TOLERANCE):
+1. การแพ้อาหาร (Allergies):
+   - ห้ามแนะนำเมนูที่มีส่วนผสมของสารก่อภูมิแพ้ที่ลูกค้าแจ้งเด็ดขาด (ต้องปลอดภัย 100%)
+   - ห้ามเสนอทางเลือกดัดแปลง เช่น "ตัดชีสออกได้" หรือ "เปลี่ยนไปใช้ครีมพืชแทน" เมนูไหนมีส่วนผสมที่ลูกค้าแพ้ ให้ตัดทิ้งไปเลย
+   - หากแพ้นม/Dairy: ห้ามแนะนำ นม, เนย, ชีส, ครีม, ซุปครีม, พาสต้าครีม
+   - หากแพ้ไข่: ห้ามแนะนำ ไข่, มายองเนส
+
+2. การจัดรูปแบบข้อความ:
+   - ห้ามพูดคำว่า "ITEM_REF", "รหัสสินค้า", "ID" ออกมาในข้อความตอบกลับเด็ดขาด
+   - ใส่รหัสตัวเลขเฉพาะในอาร์เรย์ "recommendedItemIds" เท่านั้น
+   - จัดรูปแบบรายการอาหารโดยขึ้นบรรทัดใหม่อย่างเป็นระเบียบชัดเจน
+
 คำสั่งเรื่องโครงสร้าง: ตอบกลับเป็น raw JSON object เท่านั้น ห้ามใส่ markdown codeblock
 {
   "user_text_th": "ข้อความคำถามของลูกค้าภาษาไทย",
   "user_text_en": "ข้อความคำถามของลูกค้าแปลเป็นภาษาอังกฤษ",
-  "text_th": "ข้อความตอบกลับภาษาไทยอย่างเป็นธรรมชาติและสุภาพ",
+  "text_th": "ข้อความตอบกลับภาษาไทยอย่างเป็นธรรมชาติและสุภาพ โดยขึ้นบรรทัดใหม่อย่างเป็นระเบียบ",
   "text_en": "ข้อความตอบกลับแปลเป็นภาษาอังกฤษ",
   "recommendedItemIds": [],
   "action": null,
@@ -229,8 +266,16 @@ ${customerPrefsContext}
       );
     }
 
-    let textTh = formatIngredientsToBullets(parsedData.text_th || parsedData.text || "", "th");
-    let textEn = formatIngredientsToBullets(parsedData.text_en || parsedData.text || "", "en");
+    // ล้าง ITEM_REF ออกให้หมด
+    let textTh = cleanItemRefs(parsedData.text_th || parsedData.text || "");
+    let textEn = cleanItemRefs(parsedData.text_en || parsedData.text || "");
+
+    // เรียกฟอร์แมตเฉพาะกรณีถามหาส่วนผสม (Ingredients) เท่านั้น
+    const isIngredientQuery = /(ส่วนผสม|วัตถุดิบ|ingredient)/i.test(message);
+    if (isIngredientQuery) {
+      textTh = formatIngredientsToBullets(textTh, "th");
+      textEn = formatIngredientsToBullets(textEn, "en");
+    }
 
     return res.status(200).json({
       user_text_th: parsedData.user_text_th || message,
