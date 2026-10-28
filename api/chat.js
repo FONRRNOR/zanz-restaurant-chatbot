@@ -36,12 +36,10 @@ function cleanItemRefs(text) {
     .trim();
 }
 
-// 🟢 ตรวจจับคำแพ้อาหารจากข้อความแชท + ตั้งค่าของผู้ใช้ พร้อมแมปคำพ้องความหมายทั้งหมด
 function getStrictAllergyTokens(message = "", userAllergies = []) {
   const text = `${message} ${(userAllergies || []).join(" ")}`.toLowerCase();
   const tokensToBlock = new Set();
 
-  // กลุ่ม นม / Dairy / เนย / ชีส / ครีม
   if (/(milk|dairy|lactose|butter|cheese|cream|นม|เนย|ชีส|ครีม)/i.test(text)) {
     [
       "dairy",
@@ -61,21 +59,18 @@ function getStrictAllergyTokens(message = "", userAllergies = []) {
     ].forEach((t) => tokensToBlock.add(t));
   }
 
-  // กลุ่ม ไข่ / Egg / มายองเนส
   if (/(egg|eggs|mayo|mayonnaise|ไข่|มายองเนส)/i.test(text)) {
-    ["egg", "eggs", "mayo", "mayonnaise", "ไข่", "ไข่ดาว", "ไข่เจียว"].forEach(
-      (t) => tokensToBlock.add(t),
+    ["egg", "eggs", "mayo", "mayonnaise", "ไข่"].forEach((t) =>
+      tokensToBlock.add(t),
     );
   }
 
-  // กลุ่ม ถั่ว / Nuts / Peanuts
   if (/(nut|nuts|peanut|peanuts|walnut|almond|cashew|ถั่ว)/i.test(text)) {
     ["nut", "peanut", "walnut", "almond", "cashew", "ถั่ว"].forEach((t) =>
       tokensToBlock.add(t),
     );
   }
 
-  // กลุ่ม อาหารทะเล / Seafood / กุ้ง / ปู / ปลา
   if (
     /(seafood|shrimp|prawn|crab|squid|fish|shellfish|อาหารทะเล|กุ้ง|ปู|ปลา|หมึก)/i.test(
       text,
@@ -96,7 +91,6 @@ function getStrictAllergyTokens(message = "", userAllergies = []) {
     ].forEach((t) => tokensToBlock.add(t));
   }
 
-  // กลุ่ม แป้งสาลี / Gluten / Wheat
   if (/(gluten|wheat|flour|bread|แป้งสาลี|กลูเตน)/i.test(text)) {
     ["gluten", "wheat", "flour", "bread", "แป้งสาลี", "กลูเตน"].forEach((t) =>
       tokensToBlock.add(t),
@@ -106,7 +100,6 @@ function getStrictAllergyTokens(message = "", userAllergies = []) {
   return Array.from(tokensToBlock);
 }
 
-// 🟢 ตรวจสอบว่าเมนูนี้มีคำต้องห้ามหรือไม่
 function isItemSafeFromAllergens(item, blockedTokens) {
   if (!blockedTokens || blockedTokens.length === 0) return true;
 
@@ -125,14 +118,7 @@ function isItemSafeFromAllergens(item, blockedTokens) {
     .toLowerCase();
 
   for (const token of blockedTokens) {
-    // ใช้ Regex แบบดักจับคำ หรือส่วนของคำ
-    const regex = new RegExp(
-      `(^|[^a-zA-Z0-9ก-๙])${token}([^a-zA-Z0-9ก-๙]|$)`,
-      "i",
-    );
-    if (regex.test(itemData) || itemData.includes(token)) {
-      return false; // มีสารก่อภูมิแพ้ -> ตัดทิ้งทันที
-    }
+    if (itemData.includes(token)) return false;
   }
   return true;
 }
@@ -216,19 +202,16 @@ Respond ONLY with "NO" if completely off-topic.`;
 
     if (dbError) throw dbError;
 
-    // 🔴 1. ตรวจสอบสารก่อภูมิแพ้ และดึงคำต้องห้ามทั้งหมดออกมา
     const blockedTokens = getStrictAllergyTokens(
       message,
       customerPreferences.allergies || [],
     );
-
-    // 🔴 2. กรองเมนูที่ไม่ปลอดภัยทิ้งทันที ถ้าลูกค้าบอกแพ้นม/ไข่ จานที่มี Butter/Dairy/Egg จะถูกคัดออกไม่ให้ AI เห็น
-    const isAllergyInquiry = blockedTokens.length > 0;
-    const safeMenuItems = isAllergyInquiry
-      ? (rawMenuItems || []).filter((item) =>
-          isItemSafeFromAllergens(item, blockedTokens),
-        )
-      : rawMenuItems || [];
+    const safeMenuItems =
+      blockedTokens.length > 0
+        ? (rawMenuItems || []).filter((item) =>
+            isItemSafeFromAllergens(item, blockedTokens),
+          )
+        : rawMenuItems || [];
 
     const menuContext = safeMenuItems
       .map((item) => {
@@ -262,62 +245,46 @@ CUSTOMER RESTRICTIONS / ALLERGIES:
 - Spice Tolerance Level: ${customerPreferences.spiceLevel ?? 3}
 `;
 
-    let systemPrompt = "";
-    if (language === "en") {
-      systemPrompt = `You are Chef AI, an expert, polite, and health-conscious restaurant concierge.
+    // 🟢 บังคับโครงสร้างและ Action ให้ชัดเจน 100%
+    const systemPrompt = `You are Chef AI, an expert, polite restaurant assistant.
 ${customerPrefsContext}
 
-CRITICAL RULES:
-1. RECOMMENDATIONS & MENU DISPLAY:
-   - NOTE: MILK = DAIRY = BUTTER = CREAM = CHEESE. EGGS = MAYONNAISE.
-   - The "AVAILABLE MENU ITEMS" list provided below has ALREADY been pre-filtered to 100% safe dishes.
-   - Recommend 3-5 dishes strictly from "AVAILABLE MENU ITEMS".
-   - You MUST extract the integer IDs of all recommended items and put them into "recommendedItemIds": [id1, id2, ...] so the menu cards appear on screen.
-   - NEVER mention or invent any dish not present in "AVAILABLE MENU ITEMS".
+CRITICAL INSTRUCTIONS:
+1. RESPONSE FORMAT:
+   - Output ONLY a single valid JSON object.
+   - Do NOT write any conversational text, pleasantries, or explanations outside the JSON object.
+   - Never wrap with markdown backticks (no \`\`\`json).
 
-2. TEXT FORMATTING & CLEANLINESS:
-   - NEVER mention internal codes such as "ITEM_REF", "ID", or item numbers anywhere in your text response.
-   - Format each recommended dish clearly on its own line:
-     - **Dish Name**: Appetizing reason why it fits.
+2. ORDERING DISHES:
+   - When the user asks to ORDER dishes (e.g., "I would like to order...", "เอา...", "ขอสั่ง..."):
+     * You MUST set "action": "CONFIRM_ORDER_ITEMS".
+     * You MUST populate "orderItems" array: [{"id": <integer_id>, "name": "<dish_name>", "quantity": <integer_qty>, "price": <price_number>}]
+     * You MUST ALSO include those item IDs in "recommendedItemIds": [id1, id2, ...] so that cards display on screen.
+   - If user is only asking questions or browsing:
+     * Set "action": null.
+     * Set "orderItems": [].
+     * Put suggested item IDs in "recommendedItemIds".
 
-OUTPUT FORMAT: raw JSON object only.
+3. ALLERGIES & MENU ITEMS:
+   - Only recommend dishes from "AVAILABLE MENU ITEMS".
+   - Never mention internal codes like "ITEM_REF" or "ID" in the message text.
+
+JSON FORMAT:
 {
-  "user_text_th": "User query translated into Thai",
+  "user_text_th": "User query translated to Thai",
   "user_text_en": "User query in English",
-  "text_th": "Natural Thai response with line breaks",
-  "text_en": "Natural English response with line breaks",
+  "text_th": "Friendly natural Thai response with line breaks",
+  "text_en": "Friendly natural English response with line breaks",
   "recommendedItemIds": [],
-  "action": null,
+  "action": "CONFIRM_ORDER_ITEMS" or null,
   "orderItems": []
 }
-AVAILABLE MENU ITEMS:\n${menuContext}\nCURRENT CART:\n${cartContext}`;
-    } else {
-      systemPrompt = `คุณคือ เชฟ AI ผู้เชี่ยวชาญด้านอาหารและผู้ช่วยประจำร้านอาหาร
-${customerPrefsContext}
 
-กฎสำคัญที่สุด (MANDATORY RULES):
-1. การแนะนำเมนูและสารก่อภูมิแพ้:
-   - หมายเหตุสำคัญ: นม = DAIRY = เนย (BUTTER) = ครีม (CREAM) = ชีส (CHEESE) และ ไข่ (EGG) = มายองเนส
-   - รายการใน "รายการเมนูอาหารที่มี" ได้รับการกรองให้ปลอดภัย 100% แล้ว
-   - ให้แนะนำเมนูจาก "รายการเมนูอาหารที่มี" เท่านั้น ห้ามคิดเมนูอื่นขึ้นมาเอง
-   - คุณต้องดึงรหัส ID ของเมนูที่แนะนำทั้งหมดใส่ลงใน "recommendedItemIds": [id1, id2, ...] เสมอ เพื่อให้การ์ดเมนูแสดงที่หน้าจอ
+AVAILABLE MENU ITEMS:
+${menuContext}
 
-2. การจัดรูปแบบข้อความ:
-   - ห้ามพูดคำว่า "ITEM_REF", "รหัสสินค้า", "ID" ออกมาในข้อความตอบกลับเด็ดขาด
-   - จัดรูปแบบรายการอาหารโดยขึ้นบรรทัดใหม่อย่างเป็นระเบียบ
-
-คำสั่งเรื่องโครงสร้าง: ตอบกลับเป็น raw JSON object เท่านั้น
-{
-  "user_text_th": "ข้อความคำถามของลูกค้าภาษาไทย",
-  "user_text_en": "ข้อความคำถามของลูกค้าแปลเป็นภาษาอังกฤษ",
-  "text_th": "ข้อความตอบกลับภาษาไทยอย่างเป็นธรรมชาติและสุภาพ โดยขึ้นบรรทัดใหม่อย่างเป็นระเบียบ",
-  "text_en": "ข้อความตอบกลับแปลเป็นภาษาอังกฤษ",
-  "recommendedItemIds": [],
-  "action": null,
-  "orderItems": []
-}
-รายการเมนูอาหารที่มี:\n${menuContext}\nตะกร้าปัจจุบัน:\n${cartContext}`;
-    }
+CURRENT CART:
+${cartContext}`;
 
     const response = await openai.chat.completions.create({
       model: "typhoon-v2.5-30b-a3b-instruct",
@@ -339,39 +306,86 @@ ${customerPrefsContext}
       )
       .trim();
 
+    // 🟢 ดึงเฉพาะ JSON Object เท่านั้น ตัดข้อความแปลกปลอมที่โมเดลแอบพิมพ์ด้านนอกทิ้ง
     let parsedData = {};
     try {
-      parsedData = JSON.parse(rawResponse);
+      const jsonStart = rawResponse.indexOf("{");
+      const jsonEnd = rawResponse.lastIndexOf("}");
+      if (jsonStart !== -1 && jsonEnd !== -1) {
+        const jsonOnly = rawResponse.substring(jsonStart, jsonEnd + 1);
+        parsedData = JSON.parse(jsonOnly);
+      } else {
+        throw new Error("No JSON bracket found");
+      }
     } catch (e) {
-      const cleanFallback = rawResponse.replace(/```json|```/g, "").trim();
-      parsedData = { text_th: cleanFallback, text_en: cleanFallback };
+      console.error("JSON Parse Error:", e);
+      parsedData = {
+        text_th: "ขออภัยครับ กรุณาลองใหม่อีกครั้ง",
+        text_en: "I apologize, please try again.",
+        recommendedItemIds: [],
+        action: null,
+        orderItems: [],
+      };
     }
 
-    // กรองเอาเฉพาะเมนูที่ปลอดภัยจริง ๆ
-    let recommendedItems = [];
+    // 🟢 แปลง orderItems ให้เป็น Format มาตรฐาน มีทั้ง id, name, price, quantity
+    let normalizedOrderItems = [];
     if (
-      Array.isArray(parsedData.recommendedItemIds) &&
-      parsedData.recommendedItemIds.length > 0
+      Array.isArray(parsedData.orderItems) &&
+      parsedData.orderItems.length > 0
     ) {
-      recommendedItems = safeMenuItems.filter((item) =>
-        parsedData.recommendedItemIds.map(String).includes(String(item.id)),
-      );
+      normalizedOrderItems = parsedData.orderItems.map((oi) => {
+        const targetId = oi.id !== undefined ? oi.id : oi.itemId;
+        const matched = (rawMenuItems || []).find(
+          (m) => String(m.id) === String(targetId),
+        );
+        return {
+          id: targetId,
+          itemId: targetId,
+          name: matched ? matched.name : oi.name || "Menu Item",
+          name_th: matched
+            ? matched.name_th || matched.name
+            : oi.name_th || oi.name || "Menu Item",
+          price: matched ? Number(matched.price) : Number(oi.price) || 0,
+          quantity: Number(oi.quantity) || 1,
+        };
+      });
     }
 
-    let textTh = cleanItemRefs(parsedData.text_th || parsedData.text || "");
-    let textEn = cleanItemRefs(parsedData.text_en || parsedData.text || "");
+    // รวม IDs สำหรับการ์ดแสดงผล
+    let recommendedIds = Array.isArray(parsedData.recommendedItemIds)
+      ? [...parsedData.recommendedItemIds]
+      : [];
+    if (normalizedOrderItems.length > 0) {
+      normalizedOrderItems.forEach((oi) => {
+        if (!recommendedIds.map(String).includes(String(oi.id))) {
+          recommendedIds.push(oi.id);
+        }
+      });
+    }
+
+    let recommendedItems = (rawMenuItems || []).filter((item) =>
+      recommendedIds.map(String).includes(String(item.id)),
+    );
+
+    let textTh = cleanItemRefs(parsedData.text_th || "");
+    let textEn = cleanItemRefs(parsedData.text_en || "");
+
+    // 🟢 เลือกข้อความตอบกลับตามภาษาของผู้ใช้จริง
+    const chosenText = language === "en" ? textEn || textTh : textTh || textEn;
 
     return res.status(200).json({
       user_text_th: parsedData.user_text_th || message,
       user_text_en: parsedData.user_text_en || message,
       text_th: textTh,
       text_en: textEn,
-      text: language === "en" ? textEn : textTh,
+      text: chosenText,
       items: recommendedItems,
-      action: parsedData.action || null,
-      orderItems: Array.isArray(parsedData.orderItems)
-        ? parsedData.orderItems
-        : [],
+      action:
+        normalizedOrderItems.length > 0
+          ? "CONFIRM_ORDER_ITEMS"
+          : parsedData.action || null,
+      orderItems: normalizedOrderItems,
       targetDishName: parsedData.targetDishName || null,
       newNote: parsedData.newNote || null,
     });
