@@ -34,6 +34,7 @@ const props = defineProps({
 const emit = defineEmits([
   "close",
   "addToCart",
+  "addMultipleToCart",
   "removeFromCart",
   "updateCartNote",
 ]);
@@ -408,6 +409,8 @@ async function sendAiMessage(queryParam = null) {
         (data.orderItems && data.orderItems.length > 0)) &&
       Array.isArray(data.orderItems)
     ) {
+      const itemsToAddToCart = [];
+
       data.orderItems.forEach((orderItem) => {
         const exactQty = Number(orderItem.quantity) || 1;
 
@@ -426,7 +429,7 @@ async function sendAiMessage(queryParam = null) {
           });
         }
 
-        emit("addToCart", {
+        itemsToAddToCart.push({
           id: orderItem.id || orderItem.itemId,
           name: orderItem.name,
           name_th: orderItem.name_th || orderItem.name,
@@ -436,6 +439,10 @@ async function sendAiMessage(queryParam = null) {
           image: orderItem.image || "",
         });
       });
+
+      if (itemsToAddToCart.length > 0) {
+        emit("addMultipleToCart", itemsToAddToCart);
+      }
     }
 
     chatMessages.value[loadingIndex] = {

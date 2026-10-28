@@ -76,6 +76,7 @@ const {
   getItemQuantity,
   goToOrder,
   addToCart,
+  addMultipleToCart,
   removeFromCart,
   handleUpdateCartNote,
   handleVisibilityChange,
@@ -473,6 +474,7 @@ onUnmounted(() => {
         :cart="cart"
         @close="isAiChatOpen = false"
         @add-to-cart="addToCart"
+        @add-multiple-to-cart="addMultipleToCart"
         @remove-from-cart="removeFromCart"
         @update-cart-note="handleUpdateCartNote"
       />
