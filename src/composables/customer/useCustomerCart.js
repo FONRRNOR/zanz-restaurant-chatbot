@@ -35,9 +35,13 @@ export function useCustomerCart(state) {
   };
 
   const groupedCartItems = computed(() => {
-    if (!state.cart) return [];
+    if (!state.cart || !Array.isArray(state.cart)) return [];
     const groups = {};
     state.cart.forEach((item) => {
+      // ข้ามรายการที่ข้อมูลไม่ครบถ้วน
+      if (!item || (!item.id && !item.menu_id) || (!item.name && !item.name_th))
+        return;
+
       const key = getGroupKey(item);
       const itemQty = Number(item.quantity) || 1;
       const itemNote = (item.notes || item.note || "").trim();

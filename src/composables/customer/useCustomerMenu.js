@@ -592,7 +592,7 @@ export function useCustomerMenu(state, onMenuFetched = () => {}) {
     }
   }
 
-  // ✅ ระบบ Realtime ตะกร้าที่มี Echo Cancellation ป้องกันการเด้งไปมา
+  // ปรับปรุง setupRealtimeCart: ตรวจสอบข้อมูลก่อนรับเข้ามาทับ
   const setupRealtimeCart = async (resId, tabId) => {
     if (!resId || !tabId) return;
     if (realtimeChannel) {
@@ -627,14 +627,18 @@ export function useCustomerMenu(state, onMenuFetched = () => {}) {
             return;
           }
 
-          // 🛡️ หัวใจสำคัญ: ถ้าเครื่องนี้เพิ่งกดไม่เกิน 1.5 วินาที ห้ามรับข้อมูลเก่าจากเซิร์ฟเวอร์มาทับ
           if (Date.now() - lastLocalCartUpdate < 1500) {
             return;
           }
 
           const incomingCart = payload.new?.cart_items || [];
-          if (JSON.stringify(state.cart) !== JSON.stringify(incomingCart)) {
-            state.cart = incomingCart;
+          
+          // ตรวจสอบว่า incomingCart เป็น Array ที่ถูกต้องและมีข้อมูลครบ
+          if (Array.isArray(incomingCart)) {
+            const validCart = incomingCart.filter(item => item && (item.id || item.menu_id) && (item.name || item.name_th));
+            if (JSON.stringify(state.cart) !== JSON.stringify(validCart)) {
+              state.cart = validCart;
+            }
           }
         },
       )
@@ -847,18 +851,29 @@ export function useCustomerMenu(state, onMenuFetched = () => {}) {
       route.query.restaurantName,
     ],
     ([resId, tabId, name]) => {
+      const prevTable = sessionStorage.getItem("customer_table_id");
+      const prevRes = sessionStorage.getItem("customer_restaurant_id");
+
       if (resId) sessionStorage.setItem("customer_restaurant_id", resId);
+      
       if (tabId) {
-        // ดึงค่าหลักของโต๊ะ (เช่น "01-A12" จาก "01-A12-Q48")
         const baseTabId = tabId.split("-")[0];
         let currentSessionTable = sessionStorage.getItem("customer_table_id");
 
-        // ตรวจสอบว่า Session เดิมมีอยู่แล้ว และขึ้นต้นด้วยโต๊ะเบอร์เดียวกันนี้หรือไม่
+        // ถ้าสแกนโต๊ะใหม่ หรือเปลี่ยนร้านอาหาร ให้เคลียร์ Cart เดิมทิ้งทันที
+        if (
+          (prevTable && !prevTable.startsWith(baseTabId)) ||
+          (prevRes && prevRes !== resId)
+        ) {
+          state.cart = [];
+          sessionStorage.removeItem(`cart_${prevRes}_${prevTable}`);
+          sessionStorage.removeItem(`cart_${prevRes}`);
+        }
+
         if (
           !currentSessionTable ||
           !currentSessionTable.startsWith(baseTabId + "-")
         ) {
-          // ถ้ายังไม่มี หรือเปลี่ยนโต๊ะใหม่ ค่อยสุ่มรหัสต่อท้ายใหม่ครั้งเดียว
           const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
           const randomLetter = letters.charAt(
             Math.floor(Math.random() * letters.length),
@@ -871,7 +886,9 @@ export function useCustomerMenu(state, onMenuFetched = () => {}) {
           currentSessionTable = `${baseTabId}-${suffix}`;
           sessionStorage.setItem("customer_table_id", currentSessionTable);
 
-          // อัปเดต URL ให้เป็นค่าที่มี Suffix นี้ครั้งเดียวโดยไม่ให้เกิดการรีเฟรชซ้ำซ้อน
+          // รีเซ็ต Cart ประจำ Session ใหม่
+          state.cart = [];
+
           router.replace({
             query: {
               ...route.query,
@@ -879,7 +896,6 @@ export function useCustomerMenu(state, onMenuFetched = () => {}) {
             },
           });
         } else {
-          // ถ้ามีอยู่แล้ว (เช่น กดรีเฟรชหน้าเว็บ) ให้ใช้ค่าเดิมจาก Session ทันที ไม่สุ่มใหม่และไม่ทำให้ URL ยาวขึ้น
           if (route.query.tableId !== currentSessionTable) {
             router.replace({
               query: {
